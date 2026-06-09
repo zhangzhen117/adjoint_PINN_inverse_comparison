@@ -11,9 +11,9 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
-from adjoint_PINN_inverse_comparison.AllenCahn_3D_identification.cfg import AllenCahn3DConfig
-from adjoint_PINN_inverse_comparison.AllenCahn_3D_identification.PINN import MLP
-from adjoint_PINN_inverse_comparison.AllenCahn_3D_identification.solver import _get_linear_solver, make_solver_cache, reaction_true, rel_l2_error, solve_allen_cahn_imex
+from cfg import AllenCahn3DConfig
+from PINN import MLP
+from solver import _get_linear_solver, make_solver_cache, reaction_true, rel_l2_error, solve_allen_cahn_imex
 
 torch.set_default_dtype(torch.float64)
 

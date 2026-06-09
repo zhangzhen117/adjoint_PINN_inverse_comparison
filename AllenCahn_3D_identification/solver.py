@@ -2,7 +2,7 @@ import numpy as np
 from scipy.fft import dctn, idctn
 from scipy.sparse import eye, kron
 
-from adjoint_PINN_inverse_comparison.AllenCahn_3D_identification.cfg import AllenCahn3DConfig
+from cfg import AllenCahn3DConfig
 
 
 def laplacian_neumann_1d(n: int, h: float):
