@@ -1,5 +1,9 @@
 # Core dependencies. Versions are unpinned; the code targets Python 3.10+.
 # torch with float64 default dtype is assumed throughout.
+#
+# IMPORTANT: the SSBroyden2 optimizer requires a PATCHED scipy. Replace
+# scipy/optimize/_optimize.py with the version from
+# https://github.com/EliKiani/Optimizing_the_Optimizer_PINNs  (see README).
 numpy
 scipy
 torch

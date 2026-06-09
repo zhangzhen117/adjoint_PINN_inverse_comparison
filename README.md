@@ -10,7 +10,7 @@ A comparison study of two approaches to PDE-constrained inverse problems:
    field are learned jointly by minimizing a combined data + PDE-residual loss,
    again driven by `scipy.optimize.minimize` over the torch parameters.
 
-Both methods recover an unknown source / coefficient field from sparse or noisy
+Both methods recover an unknown source / coefficient field `f` from sparse or noisy
 observations, and the repository compares their accuracy and convergence on four
 PDE benchmarks.
 
@@ -18,10 +18,13 @@ PDE benchmarks.
 
 | Directory | Problem | Unknown recovered |
 |-----------|---------|-------------------|
-| `Burgers_identification/` | 1D viscous Burgers (periodic, Crank–Nicolson + Newton) | forcing `S(x)` |
-| `AllenCahn_3D_identification/` | 3D Allen–Cahn (Neumann, spectral/FD) | forcing field |
+| `Burgers_identification/` | 1D viscous Burgers (periodic, Crank–Nicolson + Newton) | spatial forcing `f(x)` |
+| `AllenCahn_3D_identification/` | 3D Allen–Cahn (Neumann, spectral/FD) | state-dependent reaction force `f(u)` |
 | `Darcy_New/` | 2D Darcy flow, FEM (P2 elements) | log-permeability `m(x)`, `k = exp(m)` |
-| `cylinder/` | 2D flow past a cylinder (Re = 100, vortex shedding) | viscosity / Reynolds number |
+| `cylinder/` | 2D flow past a cylinder (Re = 100, vortex shedding) | viscosity `ν` (Reynolds number) |
+
+In the Burgers case the unknown `f` is a function of space, `f(x)`; in the
+Allen–Cahn case it is a function of the state itself, `f(u)`.
 
 Each benchmark directory follows the same layout:
 
@@ -43,6 +46,33 @@ pip install -r requirements.txt
 
 Tested with Python 3.10+. The code sets `torch.set_default_dtype(torch.float64)`
 throughout, so a CPU-only torch build is sufficient.
+
+### Required: patched SciPy for the SSBroyden optimizer
+
+Every benchmark drives the optimizer with the **self-scaled Broyden** update,
+invoked as:
+
+```python
+minimize(fun, x0, jac=True, method="BFGS", options={"method_bfgs": "SSBroyden2"})
+```
+
+The `method_bfgs` / `SSBroyden2` option is **not part of stock SciPy**. It is
+provided by the patched `_optimize.py` from
+[EliKiani/Optimizing_the_Optimizer_PINNs](https://github.com/EliKiani/Optimizing_the_Optimizer_PINNs)
+(Self-scaled Quasi-Newton methods for PINNs). To run this code you must replace
+the `_optimize.py` in your SciPy install with that file:
+
+```bash
+# locate your installed scipy
+python -c "import scipy.optimize as o; print(o._optimize.__file__)"
+# back up the original, then overwrite it with the patched _optimize.py
+```
+
+Without the patch, `scipy.optimize.minimize` ignores the `method_bfgs` option and
+silently falls back to ordinary BFGS, so results will not match the paper.
+The scalar-control cases (`cylinder/inverse_coarse.py`, `cylinder/cylinder_api.py`)
+deliberately use plain `BFGS` instead, since the SSBroyden update is singular for a
+one-dimensional control.
 
 ## Running
 
