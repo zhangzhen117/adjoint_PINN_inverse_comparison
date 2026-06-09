@@ -1,0 +1,7 @@
+# Core dependencies. Versions are unpinned; the code targets Python 3.10+.
+# torch with float64 default dtype is assumed throughout.
+numpy
+scipy
+torch
+matplotlib
+tqdm
