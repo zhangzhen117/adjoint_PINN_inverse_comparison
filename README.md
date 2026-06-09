@@ -20,11 +20,13 @@ PDE benchmarks.
 |-----------|---------|-------------------|
 | `Burgers_identification/` | 1D viscous Burgers (periodic, Crank–Nicolson + Newton) | spatial forcing `f(x)` |
 | `AllenCahn_3D_identification/` | 3D Allen–Cahn (Neumann, spectral/FD) | state-dependent reaction force `f(u)` |
-| `Darcy_New/` | 2D Darcy flow, FEM (P2 elements) | log-permeability `m(x)`, `k = exp(m)` |
+| `Darcy_New/` | 2D Darcy flow, FEM (P2 elements) | log-permeability field `f(x)`, `k = exp(f)` |
 | `cylinder/` | 2D flow past a cylinder (Re = 100, vortex shedding) | viscosity `ν` (Reynolds number) |
 
-In the Burgers case the unknown `f` is a function of space, `f(x)`; in the
-Allen–Cahn case it is a function of the state itself, `f(u)`.
+In every case except the cylinder, the unknown `f` is an infinite-dimensional
+field, not a scalar parameter: a function of space in Burgers (`f(x)`) and Darcy
+(`f(x)`, with permeability `k = exp(f)`), and a function of the state itself in
+Allen–Cahn (`f(u)`). Only the cylinder case recovers a single scalar (`ν`).
 
 Each benchmark directory follows the same layout:
 
