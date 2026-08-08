@@ -12,6 +12,13 @@ import torch.nn as nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 from cfg import AllenCahn3DConfig
+
+try:
+    from common.seeding import set_seed
+except ImportError:  # benchmark dir without the repo on the path
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from common.seeding import set_seed
 from PINN import MLP
 from solver import _get_linear_solver, make_solver_cache, reaction_true, rel_l2_error, solve_allen_cahn_imex
 

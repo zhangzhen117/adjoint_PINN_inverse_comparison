@@ -12,6 +12,13 @@ import torch.nn as nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 from cfg import AllenCahn3DConfig
+
+try:
+    from common.seeding import set_seed
+except ImportError:  # benchmark dir without the repo on the path
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from common.seeding import set_seed
 from solver import reaction_true, rel_l2_error
 
 torch.set_default_dtype(torch.float64)
@@ -210,6 +217,7 @@ def build_models(cfg: AllenCahn3DConfig):
 
 
 def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: AllenCahn3DConfig) -> Dict[str, Any]:
+    set_seed(cfg.seed)
     device = cfg.device
     adam_print_every = 100
     bfgs_print_every = 20
@@ -227,7 +235,10 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: AllenCahn3DConfig) ->
     if cfg.is_load:
         load_models(cfg, U_theta, S_phi, cfg.pinn_scipy_model)
 
-    batch = _make_fixed_batch(cfg, device, xyz_t, u0_t, xyz_t, uT_t)
+    # Collocation seed derived from the run seed, so different seeds get
+    # different point clouds as well as different initializations.
+    batch = _make_fixed_batch(cfg, device, xyz_t, u0_t, xyz_t, uT_t,
+                              seed=12345 + int(cfg.seed))
     history = {
         "adam": {"loss": [], "L_res": [], "L_ic": [], "L_bc": [], "L_data": [], "rel_l2_uT": [], "rel_l2_f": [], "lr": []},
         "bfgs": {"loss": [], "grad_norm": [], "L_res": [], "L_ic": [], "L_bc": [], "L_data": [], "rel_l2_uT": [], "rel_l2_f": []},
@@ -387,7 +398,8 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: AllenCahn3DConfig) ->
                 epoch=epoch,
             )
 
-        batch = _make_fixed_batch(cfg, device, xyz_t, u0_t, xyz_t, uT_t, seed=epoch + 12345)
+        batch = _make_fixed_batch(cfg, device, xyz_t, u0_t, xyz_t, uT_t,
+                                  seed=epoch + 12345 + 1000 * int(cfg.seed))
 
     t1 = time.perf_counter()
     history["runtime_sec"] = t1 - t0

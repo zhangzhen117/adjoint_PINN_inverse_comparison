@@ -26,6 +26,13 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 from cfg import BurgersConfig
 from PINN import MLP
+
+try:
+    from common.seeding import set_seed
+except ImportError:  # running from the benchmark directory without the repo on the path
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from common.seeding import set_seed
 from solver import make_D_L, BurgersFDCore, rel_l2_error, true_force
 
 torch.set_default_dtype(torch.float64)
@@ -49,7 +56,13 @@ def _flatten_params(model: nn.Module) -> np.ndarray:
 
 
 def get_init_phi(cfg: BurgersConfig) -> np.ndarray:
-    """Return a random initial parameter vector for the force NN."""
+    """Return the initial parameter vector for the force NN, seeded from cfg.seed.
+
+    Seeding here rather than in the notebook is what makes the adjoint's
+    multi-initialization statistics reproducible: previously this drew from the
+    ambient torch RNG, which the Burgers notebook never seeded.
+    """
+    set_seed(cfg.seed)
     m = MLP(1, 1, cfg.hidden_S, cfg.layers_S, cfg.act_S).to(cfg.device).double()
     return _flatten_params(m)
 
@@ -219,6 +232,146 @@ def adam_warmup(phi0, fun, n_steps, lr0=1e-3):
 
 
 # ================================================================
+# Optimizer selection (bundle B / referee R3.7)
+# ================================================================
+
+def minimize_kwargs(cfg, n_params: int) -> dict:
+    """Build the ``scipy.optimize.minimize`` arguments for ``cfg.adjoint_optimizer``.
+
+    SSBroyden and plain BFGS both go through scipy's ``BFGS`` driver and differ only
+    in the ``method_bfgs`` option supplied by the patched scipy; L-BFGS-B is a
+    different driver that accepts neither ``method_bfgs`` nor a dense ``hess_inv0``,
+    which is precisely the point -- it is the limited-memory fallback for the regime
+    where SSBroyden's dense N_f x N_f Hessian no longer fits.
+    """
+    name = cfg.adjoint_optimizer.lower()
+    maxiter = cfg.scipy_adj_nn_maxiter
+
+    if name in ("ssbroyden2", "ssbroyden"):
+        return dict(
+            method="BFGS",
+            options=dict(maxiter=maxiter, gtol=cfg.scipy_gtol, disp=cfg.scipy_disp,
+                         method_bfgs="SSBroyden2",
+                         hess_inv0=np.eye(n_params), initial_scale=False),
+        )
+    if name == "bfgs":
+        return dict(
+            method="BFGS",
+            options=dict(maxiter=maxiter, gtol=cfg.scipy_gtol, disp=cfg.scipy_disp),
+        )
+    if name in ("lbfgsb", "l-bfgs-b"):
+        return dict(
+            method="L-BFGS-B",
+            options=dict(maxiter=maxiter, maxfun=10 * maxiter,
+                         gtol=cfg.scipy_gtol, ftol=0.0, disp=cfg.scipy_disp),
+        )
+    raise ValueError(f"unknown adjoint_optimizer {cfg.adjoint_optimizer!r}")
+
+
+# ================================================================
+# Coarse-grid ("grid") representation of the unknown
+# ================================================================
+
+def build_interp_matrix(x_fine, L, N_f):
+    """Periodic piecewise-linear prolongation ``P``: ``s_fine = P @ s_coarse``.
+
+    Moved here from run_identification.ipynb (cells 12-13) so the coarse-grid
+    adjoint can be run under SLURM across seeds as one cell of the bundle-A
+    representation x algorithm factorial, instead of existing only inside a
+    notebook. ``PINN.GridForce`` implements the same map pointwise, and the two
+    agree to ~1e-14.
+    """
+    N = len(x_fine)
+    dx_c = L / N_f
+    P = np.zeros((N, N_f))
+    for i, xf in enumerate(x_fine):
+        j = int(xf / dx_c) % N_f
+        j1 = (j + 1) % N_f
+        w1 = (xf - j * dx_c) / dx_c
+        P[i, j] += 1.0 - w1
+        P[i, j1] += w1
+    return P
+
+
+def adjoint_objective_coarse(s_coarse, P, core, u0_fine, uT_target_fine):
+    """Objective and gradient with respect to the coarse nodal values.
+
+    ``J = 0.5*dx*||u(T) - uT_target||^2``, differentiated through the
+    Crank-Nicolson trajectory and then through the prolongation by the chain rule,
+    ``grad_coarse = P^T grad_fine``.
+    """
+    dt, dx, Nt, N = core.dt, core.dx, core.Nt, core.N
+    s_fine = P @ s_coarse
+    fwd = core.forward(u0_fine, s_fine, store_trajectory=True)
+    uT = fwd["u_final"]
+    U_hist = fwd["U_hist"]
+    mis = uT - uT_target_fine
+    loss = 0.5 * dx * float(np.dot(mis, mis))
+
+    D, Lx, nu_val = core.D, core.Lx, core.nu
+    I = np.eye(N)
+    A_list, B_list = [], []
+    for n in range(Nt):
+        Jfn = -np.diag(D @ U_hist[n]) - np.diag(U_hist[n]) @ D + nu_val * Lx
+        Jfn1 = -np.diag(D @ U_hist[n + 1]) - np.diag(U_hist[n + 1]) @ D + nu_val * Lx
+        A_list.append(-I - 0.5 * dt * Jfn)
+        B_list.append(I - 0.5 * dt * Jfn1)
+
+    dJ_duT = dx * mis
+    lam = [None] * (Nt + 1)
+    lam[Nt] = np.linalg.solve(B_list[-1].T, -dJ_duT)
+    for n in range(Nt - 1, 0, -1):
+        lam[n] = np.linalg.solve(B_list[n - 1].T, -A_list[n].T @ lam[n + 1])
+    lam[0] = np.linalg.solve(B_list[0].T, -A_list[0].T @ lam[1])
+
+    lam_sum = sum(lam[n + 1] for n in range(Nt))
+    grad_fine = -dt * lam_sum
+    grad_coarse = P.T @ grad_fine
+    return loss, grad_coarse
+
+
+def invert_force_adjoint_grid(u0, uT_target, cfg, s0_coarse=None):
+    """Discrete-adjoint inversion with the unknown on a coarse periodic mesh.
+
+    The grid + adjoint cell of the bundle-A factorial. Note it starts from
+    ``s0_coarse = 0`` and involves no random initialization, so unlike the other
+    three cells it is fully deterministic and has no seed-to-seed spread.
+    """
+    core = BurgersFDCore(cfg)
+    x_grid = core.x
+    s_true = true_force(x_grid)
+    N_f = cfg.n_coarse
+    P = build_interp_matrix(x_grid, cfg.L, N_f)
+    if s0_coarse is None:
+        s0_coarse = np.zeros(N_f)
+
+    history = {"evals": [], "iters": []}
+    last = {}
+
+    def fun(s_c):
+        loss, grad = adjoint_objective_coarse(s_c, P, core, u0, uT_target)
+        rel_f = float(rel_l2_error(P @ s_c, s_true))
+        last.update({"loss": float(loss), "grad_norm": float(np.linalg.norm(grad)),
+                     "rel_l2_f": rel_f})
+        history["evals"].append({"k": len(history["evals"]), **last})
+        return loss, grad
+
+    def cb(s_c):
+        history["iters"].append({"k": len(history["iters"]), **last})
+
+    t0 = time.perf_counter()
+    res = minimize(fun=fun, x0=s0_coarse, jac=True, callback=cb, tol=cfg.scipy_ftol,
+                   **minimize_kwargs(cfg, N_f))
+    history["runtime_sec"] = time.perf_counter() - t0
+
+    s_opt_coarse = res.x.astype(float)
+    s_opt_fine = P @ s_opt_coarse
+    history["nfev"] = int(getattr(res, "nfev", len(history["evals"])))
+    history["nit"] = int(getattr(res, "nit", len(history["iters"])))
+    return s_opt_coarse, s_opt_fine, history
+
+
+# ================================================================
 # Main training loop
 # ================================================================
 
@@ -276,23 +429,21 @@ def invert_force_adjoint(u0, uT_target, cfg, phi0, n_steps_warmup=0):
         history = {"evals": [], "iters": []}
         k_eval["count"] = 0
 
-    # BFGS
-    print("Starting BFGS optimization...")
-    H0 = np.eye(len(phi0))
+    # Quasi-Newton phase. The optimizer is selected by cfg.adjoint_optimizer so the
+    # same code path serves the baseline and the bundle-B optimizer ablation.
+    print(f"Starting {cfg.adjoint_optimizer} optimization...")
     res = minimize(
-        fun=fun_with_hist, x0=phi0, jac=True, method="BFGS",
+        fun=fun_with_hist, x0=phi0, jac=True,
         callback=cb, tol=cfg.scipy_ftol,
-        options=dict(
-            maxiter=cfg.scipy_adj_nn_maxiter,
-            gtol=cfg.scipy_gtol,
-            disp=cfg.scipy_disp,
-            method_bfgs=cfg.scipy_method_bfgs,
-            hess_inv0=H0, initial_scale=False,
-        ),
+        **minimize_kwargs(cfg, len(phi0)),
     )
 
     t1 = time.perf_counter()
     history["runtime_sec"] = t1 - t0
+    # Function evaluations and iterations are distinct quantities and referee R3.2
+    # asks for both; the manuscript currently conflates them.
+    history["nfev"] = int(getattr(res, "nfev", len(history["evals"])))
+    history["nit"] = int(getattr(res, "nit", len(history["iters"])))
 
     phi_opt = res.x.astype(float)
     s_opt, _ = nn_force_forward(x_grid, phi_opt, cfg)

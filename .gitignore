@@ -13,3 +13,14 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Overleaf manuscript working copy (separate git remote; do not nest here)
+paper_overleaf/
+
+# SLURM job logs
+*.log
+*.err
+slurm-*.out
+
+# Sweep outputs (regenerate via sbatch slurm/run_sweep.sh)
+results/*_runs/

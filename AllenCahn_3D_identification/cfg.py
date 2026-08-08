@@ -27,8 +27,13 @@ class AllenCahn3DConfig:
     scipy_method_bfgs: str = "SSBroyden2"
     scipy_verbose: bool = False
     scipy_disp: bool = False
-    GD_warmup_steps: int = 200
+    # NOTE: GD_warmup_steps was never referenced; the warmup length is passed
+    # explicitly at the call site. Removed so it cannot be read as a live setting.
     GD_warmup_lr: float = 1.0e-3
+
+    # Run identity. Seeds network initialization and collocation sampling, so the
+    # multi-initialization statistics of referees R1.7 and R3.5 are reproducible.
+    seed: int = 0
 
     # Device
     device: str = "cuda" if torch.cuda.is_available() else "cpu"

@@ -9,3 +9,14 @@ scipy
 torch
 matplotlib
 tqdm
+
+# Mesh generation for the cylinder benchmark (cylinder/cylinder_mesh.py).
+gmsh
+
+# Result aggregation for the ablation sweeps (common/sweep.py).
+pandas
+
+# NOTE: the SOAP optimizer is NOT a dependency -- it is vendored in common/soap.py
+# from https://github.com/nikhilvyas/SOAP (MIT), so the optimizer used in the paper
+# is pinned and identical on every node. See that file for the two modifications
+# (float64 preservation, weight_decay default 0).

@@ -14,7 +14,42 @@ class BurgersConfig:
     nu: float = 1.5e-2
 
     # ---------------- Regularization ----------------
-    alpha_reg: float = 0.0 
+    alpha_reg: float = 0.0
+
+    # ---------------- Run identity ----------------
+    # Seeds network initialization and collocation sampling. Previously the
+    # notebook never seeded torch at all, so runs were not reproducible and no
+    # multi-initialization statistics were possible (referees R1.7, R3.5).
+    seed: int = 0
+
+    # ---------------- Representation of the unknown f(x) ----------------
+    # "nn"   -- f is an MLP, N_f = 1153 weights
+    # "grid" -- f is n_coarse nodal values on a uniform periodic mesh, linearly
+    #           interpolated to the forward grid
+    # Both the adjoint and the PINN can use either, which is what makes the
+    # representation x algorithm factorial of bundle A possible.
+    representation: str = "nn"
+    n_coarse: int = 64
+
+    # ---------------- Optimizer selection (bundle B, referee R3.7) ------------
+    # Adjoint side: "ssbroyden2" | "bfgs" | "lbfgsb". SSBroyden carries a dense
+    # N_f x N_f inverse Hessian, so it is the one that does not scale; the other two
+    # are the fallbacks whose ranking the ablation checks.
+    adjoint_optimizer: str = "ssbroyden2"
+    # PINN side: "ssbroyden2" | "adam" | "soap".
+    pinn_optimizer: str = "ssbroyden2"
+
+    # Learning rates. These must be tunable per optimizer: SOAP at lr=1e-3 is ~14x
+    # worse than Adam on a smooth fit, while at its default 3e-3 it is ~120x better,
+    # so a single shared learning rate would measure the choice of lr rather than
+    # the choice of optimizer.
+    pinn_adam_lr: float = 1e-3      # was hard-coded as a literal in train_pinn
+    pinn_soap_lr: float = 3e-3      # SOAP's published default
+
+    # Hard wall-clock ceiling for the run-to-convergence protocol; None disables it.
+    # Runs that hit the cap are recorded converged=False rather than truncated
+    # silently. Set to 2x the SSBroyden baseline for this benchmark.
+    walltime_cap_s: float | None = None
 
     # ---------------- Adjoint optimizer (SciPy) ----------------
     scipy_adj_nn_maxiter: int = 400
@@ -23,8 +58,9 @@ class BurgersConfig:
     scipy_method_bfgs: str = "SSBroyden2"
     scipy_verbose: bool = False
     scipy_disp: bool = False
-    scipy_target_loss: float = 1e-6
-    scipy_bfgs_restarts: int = 10
+    # NOTE: scipy_target_loss and scipy_bfgs_restarts were never referenced by any
+    # code path; they are removed so they cannot be mistaken for live settings.
+    # The adjoint runs to scipy_adj_nn_maxiter with ftol = gtol = 0.
 
     GD_warmup_lr: float = 1e-3
 

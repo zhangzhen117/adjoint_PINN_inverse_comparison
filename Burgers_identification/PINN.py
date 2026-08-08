@@ -20,6 +20,15 @@ from numpy.linalg import cholesky, LinAlgError
 from cfg import BurgersConfig
 from solver import rel_l2_error, true_force
 
+try:
+    from common.seeding import set_seed
+    from common.convergence import ConvergenceMonitor
+except ImportError:  # running from the benchmark directory without the repo on the path
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from common.seeding import set_seed
+    from common.convergence import ConvergenceMonitor
+
 torch.set_default_dtype(torch.float64)
 
 
@@ -46,6 +55,48 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+class GridForce(nn.Module):
+    """The unknown forcing as ``n_coarse`` nodal values on a uniform periodic mesh.
+
+    This is the *grid* half of the representation x algorithm factorial (referee
+    R1.4). The adjoint has always had this option -- the "Adjoint coarse mesh"
+    estimator in Test 1 -- but the PINN did not, so the 2x2 was missing one cell and
+    the effects of representation and of gradient computation could not be
+    separated.
+
+    The interpolation reproduces the adjoint's prolongation matrix ``P`` exactly
+    (periodic, piecewise linear, ``dx_c = L / n_coarse``), evaluated pointwise so
+    that it also works at the PINN's off-grid collocation points. Differentiable
+    with respect to the nodal values, which are the optimization variables.
+    """
+
+    def __init__(self, n_coarse: int, L: float):
+        super().__init__()
+        self.n_coarse = int(n_coarse)
+        self.L = float(L)
+        self.s = nn.Parameter(torch.zeros(self.n_coarse, dtype=torch.float64))
+
+    def forward(self, x):
+        dx_c = self.L / self.n_coarse
+        xm = torch.remainder(x.reshape(-1), self.L)
+        pos = xm / dx_c
+        j = torch.floor(pos).long() % self.n_coarse
+        j1 = (j + 1) % self.n_coarse
+        w1 = pos - torch.floor(pos)
+        out = (1.0 - w1) * self.s[j] + w1 * self.s[j1]
+        return out.reshape(-1, 1)
+
+
+def make_force_net(cfg: BurgersConfig, device) -> nn.Module:
+    """Build the representation of the unknown f(x) selected by ``cfg.representation``."""
+    rep = getattr(cfg, "representation", "nn").lower()
+    if rep == "nn":
+        return MLP(1, 1, cfg.hidden_S, cfg.layers_S, cfg.act_S).to(device).double()
+    if rep == "grid":
+        return GridForce(cfg.n_coarse, cfg.L).to(device).double()
+    raise ValueError(f"unknown representation {cfg.representation!r}; expected 'nn' or 'grid'")
 
 
 # ================================================================
@@ -175,6 +226,8 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: BurgersConfig) -> Dic
     Train PINN with U_theta(x,t) and S_phi(x).
     Direct residual loss only. Tracks rel L2 error during training.
     """
+    set_seed(cfg.seed)
+
     device = cfg.device
     N = cfg.N
     x = np.linspace(0, cfg.L, N, endpoint=False, dtype=np.float64)
@@ -184,11 +237,15 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: BurgersConfig) -> Dic
     u0_t = torch.tensor(u0, dtype=torch.float64, device=device).reshape(-1, 1)
     uT_t = torch.tensor(uT_target, dtype=torch.float64, device=device).reshape(-1, 1)
 
-    # Models
+    # Models. The state network is always an MLP; the representation of the unknown
+    # is selected by cfg.representation ("nn" or "grid") for the bundle-A factorial.
     U_theta = MLP(2, 1, cfg.hidden_U, cfg.layers_U, cfg.act_U).to(device).double()
-    S_phi = MLP(1, 1, cfg.hidden_S, cfg.layers_S, cfg.act_S).to(device).double()
+    S_phi = make_force_net(cfg, device)
 
-    batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t)
+    # Collocation seed derived from the run seed, so different seeds get different
+    # point clouds as well as different initializations.
+    batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t,
+                              seed=12345 + int(cfg.seed))
 
     # ---- Adam warmup ----
     history = {
@@ -210,7 +267,9 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: BurgersConfig) -> Dic
     warmup_steps = max(0, int(cfg.scipy_pinn_adam_warmup_steps))
     if warmup_steps > 0:
         param_list = list(U_theta.parameters()) + list(S_phi.parameters())
-        opt = torch.optim.Adam(param_list, lr=1e-3)
+        # Learning rate comes from the config; it used to be a hard-coded literal,
+        # which made the bundle-B optimizer ablation impossible to run.
+        opt = torch.optim.Adam(param_list, lr=cfg.pinn_adam_lr)
         scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=max(1, warmup_steps // 5), gamma=0.3)
         for it in range(1, warmup_steps + 1):
             opt.zero_grad(set_to_none=True)
@@ -317,7 +376,10 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: BurgersConfig) -> Dic
             H0 = np.eye(len(theta0))
 
         # Resample for next epoch
-        batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t, seed=ep)
+        # Resample per outer restart; offset by the run seed so that two seeds do
+        # not walk through the identical sequence of point clouds.
+        batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t,
+                                  seed=ep + 1000 * int(cfg.seed))
 
     t1 = time.perf_counter()
     history["runtime_sec"] = t1 - t0
@@ -338,4 +400,130 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: BurgersConfig) -> Dic
     save_models(cfg, U_theta, S_phi, cfg.pinn_scipy_model)
     print(f"Saved PINN results to {cfg.pinn_scipy_path}")
 
+    history["nfev"] = len(eval_hist)
+    history["nit"] = iter_state["k"]
+    history["converged"] = None      # the SSBroyden path runs a fixed epoch budget
+    history["stop_reason"] = "maxiter"
     return history
+
+
+# ================================================================
+# First-order training (Adam / SOAP), for the optimizer ablation
+# ================================================================
+
+def train_pinn_firstorder(u0: np.ndarray, uT_target: np.ndarray,
+                          cfg: BurgersConfig) -> Dict[str, Any]:
+    """Train the PINN entirely with a first-order optimizer, run to convergence.
+
+    Bundle B compares {Adam, SOAP, SSBroyden}. Adam and SOAP are torch optimizers
+    driven by a training loop, whereas SSBroyden is reached through
+    ``scipy.optimize.minimize``; they share no notion of an iteration, and one
+    SSBroyden step costs far more than one Adam step. Comparing them at equal
+    iteration counts would therefore flatter the cheap-step methods, so all three
+    are instead run to convergence under the single rule in
+    :class:`common.convergence.ConvergenceMonitor`, and the wall-clock each needs
+    is part of the result.
+    """
+    set_seed(cfg.seed)
+
+    device = cfg.device
+    N = cfg.N
+    x = np.linspace(0, cfg.L, N, endpoint=False, dtype=np.float64)
+    x_grid_t = torch.tensor(x, dtype=torch.float64, device=device).reshape(-1, 1)
+    x_T_t = x_grid_t.clone()
+    u0_t = torch.tensor(u0, dtype=torch.float64, device=device).reshape(-1, 1)
+    uT_t = torch.tensor(uT_target, dtype=torch.float64, device=device).reshape(-1, 1)
+
+    U_theta = MLP(2, 1, cfg.hidden_U, cfg.layers_U, cfg.act_U).to(device).double()
+    S_phi = make_force_net(cfg, device)
+    params = list(U_theta.parameters()) + list(S_phi.parameters())
+
+    name = cfg.pinn_optimizer.lower()
+    if name == "adam":
+        opt = torch.optim.Adam(params, lr=cfg.pinn_adam_lr)
+    elif name == "soap":
+        from common.soap import SOAP
+        # precondition_1d=True so biases are preconditioned too; these networks are
+        # small enough that every dimension is below max_precond_dim.
+        opt = SOAP(params, lr=cfg.pinn_soap_lr, precondition_frequency=10,
+                   precondition_1d=True, weight_decay=0.0)
+    else:
+        raise ValueError(f"train_pinn_firstorder does not handle {cfg.pinn_optimizer!r}")
+
+    monitor = ConvergenceMonitor(rel_tol=1e-8, window=500,
+                                 walltime_cap_s=cfg.walltime_cap_s)
+
+    history = {"adam": {k: [] for k in ("loss", "L_res", "L_ic", "L_bc", "L_data",
+                                        "rel_l2_uT", "rel_l2_f", "lr")},
+               "bfgs": {k: [] for k in ("loss", "grad_norm", "L_res", "L_ic", "L_bc",
+                                        "L_data", "rel_l2_uT", "rel_l2_f")}}
+
+    def rel_errors():
+        with torch.no_grad():
+            xt_T = torch.cat([x_T_t, torch.full_like(x_T_t, cfg.t_final)], dim=1)
+            u_T_pred = U_theta(xt_T).cpu().numpy().ravel()
+        return float(rel_l2_error(u_T_pred, uT_target)), eval_S_error(S_phi, x, device)
+
+    # Resample on the same cadence as the quasi-Newton path's outer restarts, so
+    # the two see statistically equivalent collocation sequences.
+    resample_every = max(1, cfg.scipy_pinn_maxiter)
+    batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t,
+                              seed=12345 + int(cfg.seed))
+
+    t0 = time.perf_counter()
+    step = 0
+    while True:
+        if step > 0 and step % resample_every == 0:
+            batch = _make_fixed_batch(cfg, device, x_grid_t, u0_t, x_T_t, uT_t,
+                                      seed=step // resample_every + 1000 * int(cfg.seed))
+        opt.zero_grad(set_to_none=True)
+        L, Ldict = _pinn_loss(cfg, U_theta, S_phi, batch)
+        L.backward()
+        opt.step()
+        step += 1
+
+        loss_val = float(L.detach())
+        rel_uT, rel_f = rel_errors()
+        history["adam"]["loss"].append(loss_val)
+        for key in ("L_res", "L_ic", "L_bc", "L_data"):
+            history["adam"][key].append(Ldict[key])
+        history["adam"]["rel_l2_uT"].append(rel_uT)
+        history["adam"]["rel_l2_f"].append(rel_f)
+        history["adam"]["lr"].append(opt.param_groups[0]["lr"])
+
+        if step % 500 == 0:
+            print(f"[{name} {step:6d}] loss={loss_val:.3e} rel_uT={rel_uT:.3e} "
+                  f"rel_f={rel_f:.3e} t={monitor.elapsed_s:.0f}s", flush=True)
+
+        if monitor.update(loss_val):
+            break
+
+    history["runtime_sec"] = time.perf_counter() - t0
+    history["nfev"] = step
+    history["nit"] = step
+    history["converged"] = monitor.converged
+    history["stop_reason"] = monitor.stop_reason
+    print(f"[{name}] stopped after {step} steps: {monitor.stop_reason} "
+          f"({history['runtime_sec']:.0f}s)")
+
+    os.makedirs(os.path.dirname(cfg.pinn_scipy_path) or ".", exist_ok=True)
+    for phase in ("adam", "bfgs"):
+        for key in history[phase]:
+            history[phase][key] = np.asarray(history[phase][key], dtype=float)
+    np.savez_compressed(
+        cfg.pinn_scipy_path,
+        **{f"adam_{k}": v for k, v in history["adam"].items()},
+        **{f"bfgs_{k}": v for k, v in history["bfgs"].items()},
+        runtime_sec=np.array(history["runtime_sec"]),
+        cfg_snapshot=np.array(asdict(cfg), dtype=object),
+    )
+    save_models(cfg, U_theta, S_phi, cfg.pinn_scipy_model)
+    return history
+
+
+def train_pinn_dispatch(u0: np.ndarray, uT_target: np.ndarray,
+                        cfg: BurgersConfig) -> Dict[str, Any]:
+    """Route to the quasi-Newton or the first-order trainer per cfg.pinn_optimizer."""
+    if cfg.pinn_optimizer.lower() in ("ssbroyden2", "ssbroyden", "bfgs"):
+        return train_pinn(u0, uT_target, cfg)
+    return train_pinn_firstorder(u0, uT_target, cfg)

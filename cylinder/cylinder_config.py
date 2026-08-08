@@ -98,6 +98,17 @@ class CylinderRunConfig:
     seed_fwd: int = 45
     seed_inv: int = 44
 
+    # ---- input encoding (bundle C2, referee R3.4) ----
+    # R3.4 asks whether the conclusions depend on architecture, naming Fourier
+    # features and adaptive activations specifically. "none" is the plain tanh MLP
+    # used throughout the paper; "fourier" prepends a random Fourier feature map,
+    # sin/cos(2*pi*B*x) with B ~ N(0, fourier_scale^2), the standard remedy for the
+    # spectral bias of coordinate networks. Note that on this benchmark the unknown
+    # is the scalar nu, so the encoding affects the *state* network only.
+    pinn_encoding: str = "none"          # "none" | "fourier"
+    fourier_features: int = 32           # yields 2*fourier_features channels
+    fourier_scale: float = 1.0
+
     # ----------------------------------------------------------------- device
     device: str = field(default_factory=lambda: _torch_device())
 

@@ -109,10 +109,36 @@ def train(cfg):
         return dict(pde=pde, ic=ic, ic_uv=ic_uv, inlet=inlet, walls=walls, cyl=cyl)
 
     # --------------------------------- network (32x3 streamfunction) + theta=log nu
+    class FourierFeatures(nn.Module):
+        """Random Fourier feature encoding, sin/cos(2*pi*B*x) with fixed B.
+
+        Used by the bundle-C architecture ablation (referee R3.4). B is drawn once
+        and registered as a buffer, so it is part of the seeded initialization and
+        is not re-drawn between steps.
+        """
+        def __init__(self, in_dim, n_features, scale):
+            super().__init__()
+            self.register_buffer("B", torch.randn(in_dim, n_features) * scale)
+        def forward(self, x):
+            proj = 2.0 * np.pi * (x @ self.B)
+            return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+        @property
+        def out_dim(self):
+            return 2 * self.B.shape[1]
+
     class Net(nn.Module):
         def __init__(self, h=HIDDEN, L=LAYERS, nu0=NU0):
             super().__init__()
-            layers = [nn.Linear(3, h), nn.Tanh()]
+            enc = getattr(cfg, "pinn_encoding", "none").lower()
+            if enc == "fourier":
+                self.encode = FourierFeatures(3, cfg.fourier_features, cfg.fourier_scale)
+                in_dim = self.encode.out_dim
+            elif enc == "none":
+                self.encode = None
+                in_dim = 3
+            else:
+                raise ValueError(f"unknown pinn_encoding {enc!r}")
+            layers = [nn.Linear(in_dim, h), nn.Tanh()]
             for _ in range(L-1):
                 layers += [nn.Linear(h, h), nn.Tanh()]
             layers += [nn.Linear(h, 2)]
@@ -122,7 +148,10 @@ def train(cfg):
             return torch.exp(self.theta)
         def raw(self, x, y, t):
             xs = (x - X0)/(X1 - X0)*2 - 1; ys = y/Y1; ts = t/T*2 - 1
-            out = self.net(torch.stack([xs, ys, ts], dim=-1))
+            inp = torch.stack([xs, ys, ts], dim=-1)
+            if self.encode is not None:
+                inp = self.encode(inp)
+            out = self.net(inp)
             return out[..., 0], out[..., 1]
 
     def velocity(model, x, y, t):
