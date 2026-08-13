@@ -30,7 +30,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-OUT = os.path.join(REPO, "debug", "AC_training_history_new.png")
+# Written straight into the manuscript checkout: one script per figure,
+# no "_new" copy to diverge from what the paper actually shows.
+OUT = os.path.join(REPO, "paper_overleaf", "AC_training_history.png")
 
 C = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 C_COLD, C_WARM = "#1f77b4", "#ff7f0e"
@@ -52,14 +54,33 @@ def load_pinn():
     return out, n, np.array(t)
 
 
-def load_adj(pattern, fname):
-    L, E, t = [], [], []
+def load_adj(pattern, fname, ragged=False):
+    """Accepted quasi-Newton iterates, not every objective evaluation.
+
+    The `evals` array records every point the optimizer touches, including
+    line-search trial points that are evaluated and rejected -- a restart sitting
+    at eps_f = 2e-3 probes as far as 0.6 on its second evaluation and further on
+    some seeds, which drew a spike to ~10 on the error panel that no accepted
+    iterate ever visited. `iters` holds the accepted sequence, and the axis is
+    labelled "Iteration", so that is what is plotted. Each iterate carries its
+    evaluation counter `k`, which is what cost is proportional to, so wall-clock is
+    still computed from evaluations.
+    """
+    L, E, t, K, NE = [], [], [], [], []
     for f in sorted(glob.glob(os.path.join(REPO, "results", pattern, fname))):
         z = np.load(f, allow_pickle=True)
-        ev = z["evals"]
-        L.append(np.array([e["loss"] for e in ev], float))
-        E.append(np.array([e["rel_l2_f"] for e in ev], float))
+        # the cold runs' first entries are the Adam warmup, which records no
+        # rel_l2_f and no evaluation counter; the restarts have no warmup at all
+        it = [e for e in z["iters"] if "rel_l2_f" in e and "k" in e]
+        L.append(np.array([e["loss"] for e in it], float))
+        E.append(np.array([e["rel_l2_f"] for e in it], float))
+        K.append(np.array([e["k"] for e in it], float))
+        NE.append(len(z["evals"]))
         t.append(float(z["runtime_sec"]))
+    load_adj.k = K
+    load_adj.n_evals = NE
+    if ragged:
+        return L, E, None, np.array(t)
     n = min(a.size for a in L)
     return (np.stack([a[:n] for a in L]), np.stack([a[:n] for a in E]),
             n, np.array(t))
@@ -67,8 +88,31 @@ def load_adj(pattern, fname):
 
 P, n_p, t_p = load_pinn()
 Lc, Ec, n_c, t_c = load_adj(os.path.join("D_runs", "ac_adj_s*"), "ac3d_adj.npz")
-Lw, Ew, n_w, t_w = load_adj(os.path.join("H_runs", "ac_restart_s*"),
-                            "ac3d_adj_restart.npz")
+# Untruncated cold finals: Ec is cut to the shortest cold run for the median, so
+# Ec[:, -1] is the value at the cut, not where the cold start actually stopped.
+_, Ec_full, _, _ = load_adj(os.path.join("D_runs", "ac_adj_s*"), "ac3d_adj.npz",
+                            ragged=True)
+# median, matching the bold curves. These distributions are heavy tailed -- the
+# cold start's five finals are 3.2, 4.6, 4.8, 9.6 and 19.3 x 1e-4 -- so the mean
+# (8.30e-4) sits above four of the five runs and above where the median curve
+# ends. Table 2 reports means, as the referees asked; the figure is internally
+# consistent on the median and the caption says so.
+COLD_FINAL = np.median([e[-1] for e in Ec_full])
+Lw, Ew, _, t_w = load_adj(os.path.join("H_runs", "ac_restart_s*"),
+                          "ac3d_adj_restart.npz", ragged=True)
+
+# The restart is shown only as far as the accuracy the cold start finishes at.
+# Run to the same 200-iteration rule it costs what the cold start costs and ends
+# nine times better, but the question the panel is answering is how quickly it
+# gets to where the cold start stops, so each trace is cut at its own crossing.
+TARGET = COLD_FINAL
+Kw, NEw = load_adj.k, load_adj.n_evals
+cut = [int(np.argmax(e <= TARGET)) + 1 if (e <= TARGET).any() else e.size for e in Ew]
+# wall-clock at the cut: the evaluation counter of that iterate, times cost/eval
+t_iso = np.array([Kw[i][min(cut[i], len(Kw[i])) - 1] * (t_w[i] / NEw[i])
+                  for i in range(len(cut))])
+Lw = [a[:k] for a, k in zip(Lw, cut)]
+Ew = [a[:k] for a, k in zip(Ew, cut)]
 
 # bundle D records the PINN runtime in the sweep, not the npz
 if not np.isfinite(t_p).all():
@@ -111,8 +155,11 @@ a.legend(fontsize=17, ncol=2, loc="upper right")
 a = ax[0, 1]
 band(a, np.arange(1, n_c + 1), Lc, C_COLD,
      label=f"Adjoint ({t_c.mean():.0f}$\\pm${t_c.std(ddof=1):.0f} s)")
-band(a, np.arange(1, n_w + 1), Lw, C_WARM,
-     label=f"Adjoint restart ({t_w.mean():.0f}$\\pm${t_w.std(ddof=1):.0f} s)")
+for i, y in enumerate(Lw):
+    a.semilogy(np.arange(1, y.size + 1), y, color=C_WARM, lw=1.8, alpha=0.85,
+               label=(f"Adjoint restart, to cold-start accuracy "
+                      f"({t_iso.mean():.0f}$\\pm${t_iso.std(ddof=1):.0f} s)")
+               if i == 0 else None)
 a.set_ylabel("loss", fontsize=20)
 a.set_title("Adjoint loss histories (5 seeds each)", fontsize=21)
 a.legend(fontsize=17)
@@ -125,20 +172,34 @@ a.fill_between(np.arange(n_p), P["rel_l2_f"].min(axis=0), P["rel_l2_f"].max(axis
 f = P["rel_l2_f"][:, -1]
 a.set_ylabel(r"$\varepsilon_f$", fontsize=20)
 a.set_title(f"Rel $L^2$ error of PINN forcing   "
-            f"({f.mean():.2e}$\\pm${f.std(ddof=1):.1e})", fontsize=21)
-a.set_ylim(1e-4, 1e1)
+            f"(median {np.median(f):.2e})", fontsize=21)
 a.legend(fontsize=17)
 
 a = ax[1, 1]
 band(a, np.arange(1, n_c + 1), Ec, C_COLD, label="Adjoint")
-band(a, np.arange(1, n_w + 1), Ew, C_WARM, label="Adjoint restart")
-fc, fw = Ec[:, -1], Ew[:, -1]
+for i, y in enumerate(Ew):
+    a.semilogy(np.arange(1, y.size + 1), y, color=C_WARM, lw=1.8, alpha=0.85,
+               label="Adjoint restart" if i == 0 else None)
+a.axhline(TARGET, color="0.35", ls=":", lw=2.0)
+a.annotate(f"cold-start accuracy (median) {TARGET:.2e}", xy=(n_c * 0.40, TARGET),
+           xytext=(0, 10), textcoords="offset points", fontsize=16, color="0.25")
+fc = Ec[:, -1]
 a.set_ylabel(r"$\varepsilon_f$", fontsize=20)
 a.set_title(f"Rel $L^2$ error of adjoint forcing", fontsize=21)
-a.text(0.03, 0.06, f"cold {fc.mean():.2e},  restart {fw.mean():.2e}",
+a.text(0.03, 0.06,
+       f"restart reaches it in {np.mean(cut):.0f}$\\pm${np.std(cut, ddof=1):.0f} "
+       f"iterations, {100*t_iso.mean()/t_c.mean():.0f}% of the cold-start cost",
        transform=a.transAxes, fontsize=16, color="0.25")
-a.set_ylim(1e-5, 1e1)
 a.legend(fontsize=17)
+
+# Same y-range on both error panels so the PINN and the adjoint can be compared
+# by eye; taken from everything actually drawn, rounded out to whole decades.
+_err = np.concatenate([P["rel_l2_f"].ravel(), Ec.ravel()]
+                      + [e.ravel() for e in Ew])
+_lo = 10.0 ** np.floor(np.log10(_err[_err > 0].min()))
+_hi = 10.0 ** np.ceil(np.log10(_err.max()))
+ax[1, 0].set_ylim(_lo, _hi)
+ax[1, 1].set_ylim(_lo, _hi)
 
 fig.tight_layout()
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
@@ -146,5 +207,7 @@ fig.savefig(OUT, dpi=140)
 print("wrote", OUT)
 print(f"  PINN    eps_f {f.mean():.3e} +- {f.std(ddof=1):.1e}   t {t_p.mean():.0f}s")
 print(f"  adjoint eps_f {fc.mean():.3e} +- {fc.std(ddof=1):.1e}  t {t_c.mean():.0f}s")
-print(f"  restart eps_f {fw.mean():.3e} +- {fw.std(ddof=1):.1e}  t {t_w.mean():.0f}s")
-print(f"  truncated to {n_p} PINN, {n_c} cold, {n_w} restart evaluations")
+print(f"  restart cut at {np.mean(cut):.0f}+-{np.std(cut,ddof=1):.0f} iters "
+      f"= {t_iso.mean():.0f}+-{t_iso.std(ddof=1):.0f}s "
+      f"({100*t_iso.mean()/t_c.mean():.0f}% of cold)")
+print(f"  panels: {n_p} PINN, {n_c} cold evaluations")

@@ -1,12 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=cyladjof
+#SBATCH --job-name=cylfloor
 #SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
-#SBATCH --time=04:00:00
-#SBATCH --output=logs/%x_%j.log
+#SBATCH --time=06:00:00
+#SBATCH --output=slurm/logs/%x_%j.log
+
+REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
+GRID="$REPO/cylinder_gridstudy"
 
 # gmsh needs libGLU, which is present on the GPU nodes but not on batch.
 module load mesa-glu/9.0.2-ikgf
@@ -14,7 +17,7 @@ module load mesa-glu/9.0.2-ikgf
 # `conda activate`, so call the conda interpreter by path. scipy lives in
 # opt_2nd; the venv has neither scipy nor a working matplotlib.
 PY_EXE=~/miniconda3/envs/opt_2nd/bin/python
-cd "$SLURM_SUBMIT_DIR"
+cd "$GRID"
 echo "=== $(date) on $(hostname) | $($PY_EXE -c 'import sys;print(sys.executable)') ==="
-$PY_EXE adjoint_of.py
+$PY_EXE solver_floor.py
 echo "=== done $(date) ==="

@@ -40,3 +40,6 @@ cylinder_gridstudy/figures/
 # Superseded or retracted run data, kept locally for provenance but not shipped
 *.jsonl.bak
 results/*_invalid*/
+
+# local session helper, not part of the project
+claude_resume

@@ -7,7 +7,10 @@
 #SBATCH --mem=64G
 #SBATCH --time=11:00:00
 #SBATCH --array=0-1
-#SBATCH --output=logs/%x_%A_%a.log
+#SBATCH --output=slurm/logs/%x_%A_%a.log
+
+REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
+GRID="$REPO/cylinder_gridstudy"
 
 set -o pipefail
 module purge
@@ -17,7 +20,7 @@ source /oscar/data/gk/zzhan536/OpenFOAM/OpenFOAM-v2512/etc/bashrc || exit 1
 CASES=(L5_trans L3dt0.00125_trans)
 declare -A RANKS=( [L5_trans]=32 [L3dt0.00125_trans]=16 )
 NAME="${CASES[$SLURM_ARRAY_TASK_ID]}"
-CASE="$SLURM_SUBMIT_DIR/cases/$NAME"
+CASE="$GRID/cases/$NAME"
 cd "$CASE" || exit 1
 NP=${RANKS[$NAME]:-16}
 cat > system/decomposeParDict <<EOD

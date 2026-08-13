@@ -89,6 +89,52 @@ jupyter notebook run_identification.ipynb
 The `cylinder/` case also ships shell drivers (`run_cylinder.sh`,
 `run_pinn_inv_noise_sweep.sh`) for batch runs.
 
+## Ablation sweeps
+
+The revision's sensitivity studies run through `sweeps/bundle_<letter>.py`, one
+row per (configuration x seed), dispatched by `slurm/run_sweep.sh` as an array
+job. Each writes one JSON line per run to `results/<letter>.jsonl` with a uniform
+schema, so every table and figure in the paper is generated from one dataframe.
+
+| bundle | benchmark | question | referee | results |
+|---|---|---|---|---|
+| A   | Burgers    | representation x algorithm factorial            | R1.4       | `A.jsonl` |
+| B   | Burgers    | optimizer sensitivity, learning-rate tuning     | R3.7       | `B.jsonl` |
+| B1  | Burgers    | PINN optimizers at their tuned rate, five seeds | R3.7       | `B.jsonl` |
+| C   | cylinder   | does a modern PINN setup change the result?     | R1.5, R3.4 | `C.jsonl` |
+| D   | cyl + AC   | multi-initialization statistics                 | R1.7, R3.5 | `D.jsonl` |
+| D2  | Allen-Cahn | seed statistics for the adjoint                 | R1.7, R3.5 | `D2.jsonl` |
+| E   | Darcy      | noise sensitivity and the gamma sweep           | R3.6       | `E.jsonl` |
+| E2x | Darcy      | extend the gamma grid so the optimum is bracketed | R3.6     | `E.jsonl` |
+| E2y | Darcy      | complete the gamma sweep at the other noise levels | R3.6    | `E.jsonl` |
+| F   | Allen-Cahn | architecture: size, activation, Fourier         | R1.5, R3.4 | `F.jsonl` |
+| G   | cylinder   | does converged reference data improve nu?       | --         | `G.jsonl` |
+| H   | Allen-Cahn | PINN-warm-started adjoint restart, five seeds   | --         | `H.jsonl` |
+
+```bash
+python -m sweeps.bundle_G --count          # number of rows
+sbatch --array=0-9 slurm/run_sweep.sh G    # run them
+```
+
+`cylinder_gridstudy/` is separate: an OpenFOAM mesh-refinement study establishing
+that the Test 4 observations are converged, plus the inversions run against them.
+Its raw case directories are gitignored; `mkcase.py` and `slurm/run_grid.slurm`
+regenerate them.
+
+## Figures
+
+One script per manuscript figure, each writing directly into `paper_overleaf/`:
+
+| script | figure |
+|---|---|
+| `analysis/plot_burgers_history.py`  | Fig. 1, `B_training_history.png` |
+| `analysis/plot_darcy_history.py`    | Fig. 3, `D_training_history.png` |
+| `analysis/plot_ac_history.py`       | Fig. 6, `AC_training_history.png` |
+| `analysis/plot_cylinder_history.py` | Fig. 9, `C_optimization_history_4panel.png` |
+
+The remaining `analysis/plot_*.py` are diagnostics that write to `debug/` and are
+not manuscript figures.
+
 ## Repository contents
 
 Saved optimization histories (`history/*.npz`, `*.pt`) and generated figures

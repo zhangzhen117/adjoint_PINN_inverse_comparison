@@ -30,7 +30,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 DATA = os.path.join(REPO, "cylinder_gridstudy", "cylinder_history_data.npz")
-OUT = os.path.join(REPO, "debug", "C_optimization_history_4panel_new.png")
+# Written straight into the manuscript checkout: one script per figure,
+# no "_new" copy to diverge from what the paper actually shows.
+OUT = os.path.join(REPO, "paper_overleaf", "C_optimization_history_4panel.png")
 
 # the published figure's colour order, kept so the two read as the same family
 C_LOSS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]

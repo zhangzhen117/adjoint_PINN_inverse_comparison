@@ -82,7 +82,7 @@ def main():
           f"   = {100*(t_pinn+ti.mean())/t_cold.mean():.0f}% of the cold start")
     print(f"  hybrid, complete  : {t_pinn + tfull.mean():.0f} s"
           f"   = {100*(t_pinn+tfull.mean())/t_cold.mean():.0f}% of the cold start")
-    np.savez(os.path.join(REPO, "cylinder_gridstudy", "ac_restart_isoaccuracy.npz"),
+    np.savez(os.path.join(REPO, "results", "ac_restart_isoaccuracy.npz"),
              target=target, k=k, t_iso=ti, t_full=tfull, eps_final=fin,
              t_cold=t_cold, t_pinn=t_pinn)
 

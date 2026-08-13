@@ -30,7 +30,9 @@ from matplotlib.ticker import LogFormatterMathtext, LogLocator
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(REPO, "results", "A_runs")
-OUT = os.path.join(REPO, "debug", "B_training_history_new.png")
+# Written straight into the manuscript checkout: one script per figure,
+# no "_new" copy to diverge from what the paper actually shows.
+OUT = os.path.join(REPO, "paper_overleaf", "B_training_history.png")
 TINY = 1.0e-30
 
 

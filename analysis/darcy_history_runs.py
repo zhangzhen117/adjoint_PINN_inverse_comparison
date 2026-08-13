@@ -34,7 +34,7 @@ from common.seeding import set_seed                                  # noqa: E40
 SEEDS = (0, 1, 2, 3, 4)
 NOISE, GAMMA = 0.01, 1.0e-2          # the production cell of Table 2, at the
                                      # tuned gamma* selected in Table 4
-OUT = os.path.join(REPO, "cylinder_gridstudy", "darcy_history_data.npz")
+OUT = os.path.join(REPO, "results", "darcy_history_data.npz")
 
 
 def main():

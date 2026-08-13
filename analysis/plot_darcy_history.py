@@ -28,8 +28,10 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-DATA = os.path.join(REPO, "cylinder_gridstudy", "darcy_history_data.npz")
-OUT = os.path.join(REPO, "debug", "D_training_history_new.png")
+DATA = os.path.join(REPO, "results", "darcy_history_data.npz")
+# Written straight into the manuscript checkout: one script per figure,
+# no "_new" copy to diverge from what the paper actually shows.
+OUT = os.path.join(REPO, "paper_overleaf", "D_training_history.png")
 
 C = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 SEEDS = range(5)

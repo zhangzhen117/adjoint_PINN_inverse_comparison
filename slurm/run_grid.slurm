@@ -7,7 +7,10 @@
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
 #SBATCH --array=0-4
-#SBATCH --output=logs/%x_%A_%a.log
+#SBATCH --output=slurm/logs/%x_%A_%a.log
+
+REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
+GRID="$REPO/cylinder_gridstudy"
 
 # Cylinder grid-independence study, one array task per case.
 #   sbatch run_grid.slurm
@@ -23,7 +26,7 @@ source /oscar/data/gk/zzhan536/OpenFOAM/OpenFOAM-v2512/etc/bashrc \
 CASES=(L1_trans L2_trans L3_trans L4_trans L3dt0.0025_trans)
 
 NAME="${CASES[$SLURM_ARRAY_TASK_ID]}"
-CASE="$SLURM_SUBMIT_DIR/cases/$NAME"
+CASE="$GRID/cases/$NAME"
 cd "$CASE" || { echo "no case $CASE"; exit 1; }
 
 SOLVER=pimpleFoam
