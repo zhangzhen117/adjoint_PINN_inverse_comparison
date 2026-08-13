@@ -149,6 +149,9 @@ def _run_eki(inv, scaled_Phi, y_obs, cfg, counters, sigma_obs):
     return scaled_Phi.T @ ensemble.mean(axis=0)
 
 
+_LAST_PINN = None   # set by _run_pinn so callers can read its history
+
+
 def _run_pinn(inv, RF, coefs_true, obs_points, y_obs, cfg, counters):
     """PINN with a neural field for the unknown, H1 weight converted truth-free."""
     import torch
@@ -194,6 +197,8 @@ def _run_pinn(inv, RF, coefs_true, obs_points, y_obs, cfg, counters):
     counters.n_fev = int(n_evals)
     counters.n_iter = int(pinn.history["iteration"][-1]) if n_evals else 0
     counters.residual(cfg.n_pde * max(n_evals, 1))
+    global _LAST_PINN
+    _LAST_PINN = pinn
     c = inv.element_centroids
     return pinn.predict_m(c[:, 0], c[:, 1]).ravel(), C_mesh, gamma_pinn
 

@@ -1,28 +1,39 @@
-"""Bundle C -- PINN architecture sensitivity on the cylinder (referees R1.5, R3.4).
+"""Bundle C -- does a modern PINN setup change the cylinder result? (R1.5, R3.4)
 
-R1.5 observes that each benchmark uses a single architecture, and R3.4 asks for
-architecture sensitivity naming width/depth scaling, Fourier features and adaptive
-activations. The cylinder carries this study because its inverse PINN is cheap
-(~190 s) and because it is the hardest of the four benchmarks.
+R1.5 notes that each benchmark uses a single architecture and R3.4 asks whether the
+conclusions are architecture-dependent, naming Fourier features and adaptive
+activations. Rather than sweep width and depth -- which on this benchmark mostly
+measures how fragile the training setup is -- bundle C compares three setups at the
+paper's network size:
 
-Two sub-sweeps, deliberately small -- one small and one large setting in each
-dimension rather than a dense grid:
+1. **paper** -- the published run: plain tanh MLP 32x3, Adam warmup then SSBroyden.
+   This is the eps_nu = 5.24e-3 in Table 2.
+2. **modern** -- every technique from the jaxpi2 recipe at once
+   (github.com/sifanexisted/jaxpi2, and the author's cylinder variant
+   ``cyl_pinn_pt.py``): gated ModifiedMlp + SOAP + gradient-norm loss balancing +
+   pseudo-time relaxation of the residual.
+3. **vanilla_adam** -- the paper's own plain tanh MLP trained with Adam alone.
+   Included to show that a vanilla PINN does *not* solve this problem, so the
+   comparison in the paper is against a competent PINN rather than a straw man.
+4. **paper_converged** -- the published algorithm run to a plateau rather than to
+   its fixed 10 restarts. The published run's loss is still descending when it
+   stops, so it is a fixed-budget result; without this arm the converged modern
+   setup would be compared against a truncated baseline.
 
-* **C1** width in {16, 64} x depth in {2, 4}, plus the production 32x3 reference.
-* **C2** encoding in {tanh (baseline), Fourier features}.
+The two arms that share the first-order training loop (modern, vanilla_adam) also
+share its learning-rate schedule, so the decay is a matched control rather than a
+difference between them.
 
-No seeds here: this measures the spread *across architectures*, and the
-seed-to-seed spread at fixed architecture is what bundle D measures. Reporting
-both separately keeps the two sources of variation distinguishable.
+Parameter counts are held near the paper's 2307: ModifiedMlp 32x3 is 2563, the
+plain MLP is 2307. So the three arms differ in *training setup*, not capacity.
 
-Scope note for the write-up: on this benchmark the unknown is the scalar nu, so
-architecture affects the *state* network only. The matched-architecture question
-(same representation of the unknown on both sides) is answered by bundle A, where
-the adjoint and the PINN share an identical MLP.
+Five seeds each, since bundle D showed the cylinder PINN has real seed spread and a
+single run per arm could not distinguish a technique from an initialization.
 
-The upper end of the width/depth range is bounded by SSBroyden itself: its dense
-N_f x N_f inverse Hessian costs 8*N_f^2 bytes, which is the same constraint the
-optimizer discussion (R3.7) is about.
+Note for the write-up: grad-norm balancing is adaptive loss weighting, whereas the
+manuscript states all weights are unity (main.tex:455). That bears directly on
+referee R1.6, which is assigned to the other author -- the two responses need to
+agree.
 """
 
 from __future__ import annotations
@@ -42,18 +53,23 @@ from common.seeding import set_seed                                # noqa: E402
 from common.sweep import make_record                               # noqa: E402
 from sweeps._runner import cli                                     # noqa: E402
 
-BASE_SEED = 44          # cfg.seed_inv default, kept so C is comparable with the paper
+SEEDS = (0, 1, 2, 3, 4)
+
+# (setup, arch, optimizer, gradnorm, pseudotime)
+# NOTE: rows() is addressed positionally by the SLURM array, and a running array
+# task resolves its index against this file at execution time. New cases must
+# therefore be APPENDED, never inserted -- inserting renumbers every later row and
+# silently repoints in-flight jobs at the wrong configuration.
+CASES = {
+    "paper":           ("paper",        "plain",    "ssbroyden2", False, False),
+    "modern":          ("modern",       "modified", "soap",       True,  True),
+    "vanilla_adam":    ("vanilla_adam", "plain",    "adam",       False, False),
+    "paper_converged": ("paper",        "plain",    "ssbroyden2", False, False),
+}
 
 
 def rows():
-    out = []
-    # C1: one small and one large in each dimension, plus the production reference.
-    for hidden, layers in ((16, 2), (16, 4), (64, 2), (64, 4), (32, 3)):
-        out.append({"sub": "C1", "hidden": hidden, "layers": layers,
-                    "encoding": "none"})
-    # C2: baseline activation vs a Fourier feature encoding, at the production size.
-    out.append({"sub": "C2", "hidden": 32, "layers": 3, "encoding": "fourier"})
-    return out
+    return [{"case": c, "seed": s} for c in CASES for s in SEEDS]
 
 
 def run_one(row, index):
@@ -62,17 +78,35 @@ def run_one(row, index):
     from cylinder_config import CylinderRunConfig
     import cylinder_pinn_inverse as cpi
 
-    tag = f"h{row['hidden']}L{row['layers']}_{row['encoding']}"
-    run_dir = os.path.join(REPO, "results", "C_runs", tag)
+    case = row["case"]
+    setup, arch, optimizer, gradnorm, pseudotime = CASES[case]
+
+    run_dir = os.path.join(REPO, "results", "C_runs", f"{case}_s{row['seed']}")
     fig_dir = os.path.join(run_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
 
     cfg = CylinderRunConfig()
-    cfg.hidden = row["hidden"]
-    cfg.layers = row["layers"]
-    cfg.pinn_encoding = row["encoding"]
-    cfg.seed_inv = BASE_SEED
-    # Reuse the cached warmup / observation files; only the training output moves.
+    cfg.pinn_setup = setup
+    cfg.jaxpi_arch = arch
+    cfg.jaxpi_optimizer = "adam" if optimizer == "adam" else "soap"
+    cfg.jaxpi_gradnorm = gradnorm
+    cfg.jaxpi_pseudotime = pseudotime
+    cfg.seed_inv = 44 + row["seed"]
+
+    if case == "paper_converged":
+        # Same algorithm as the published run, but restarted until the loss stops
+        # improving instead of stopping at a fixed 10 restarts. The published arm's
+        # loss is still descending when it halts, so without this the comparison
+        # against the converged modern arm would be against a truncated baseline.
+        cfg.n_restarts_inv = 60
+        cfg.inv_restart_plateau = 5
+
+    # The cylinder's default paths are relative and resolve against the CWD, which
+    # for a sweep is the repo root. Point the inputs at the cached warmup and
+    # observation files -- the 807 s saturation run is reused, never recomputed.
+    cyl_hist = os.path.join(REPO, "cylinder", "history")
+    cfg.saturated_path = os.path.join(cyl_hist, "saturated.npz")
+    cfg.obs_path = os.path.join(cyl_hist, "probe_obs.npz")
     cfg.hist_dir = run_dir
     cfg.fig_dir = fig_dir
     cfg.pinn_inv_npz = os.path.join(run_dir, "pinn_inv.npz")
@@ -84,27 +118,38 @@ def run_one(row, index):
     with RunTimer() as timer:
         out = cpi.train(cfg)
 
-    model = out["model"]
-    n_params = sum(p.numel() for p in model.parameters())
-    counters.n_params = n_params
-    counters.hessian_bytes_analytic = ssbroyden_hessian_bytes(n_params)
+    # Settling diagnostic: how much does nu still move over the last 10% of the
+    # recorded trajectory? A converged run should have this near zero. Also record
+    # the oracle-best, purely so the gap between "reachable" and "selectable" is
+    # visible in the data -- it is NOT a reportable accuracy.
+    nu_hist = np.asarray(out["hist"]["nu"], dtype=float)
+    nu_true = float(out["nu_true"])
+    e_hist = np.abs(nu_hist - nu_true) / nu_true
+    tail = e_hist[int(0.9 * len(e_hist)):] if len(e_hist) > 10 else e_hist
+    settle_band = float(tail.max() - tail.min()) if len(tail) else float("nan")
+    oracle_best = float(e_hist.min()) if len(e_hist) else float("nan")
+
+    n_params = sum(p.numel() for p in out["model"].parameters())
     n_evals = len(out["hist"]["loss"])
-    counters.n_fev = n_evals
-    counters.n_iter = n_evals
+    counters.n_params = n_params
+    counters.hessian_bytes_analytic = (ssbroyden_hessian_bytes(n_params)
+                                       if optimizer == "ssbroyden2" else 0)
+    counters.n_fev = counters.n_iter = n_evals
     counters.residual(cfg.n_pde * max(n_evals, 1))
 
     return make_record(
-        bundle="C", benchmark="cylinder",
-        method="pinn", representation="scalar",
-        optimizer="ssbroyden2",
-        arch=f"w{row['hidden']}d{row['layers']}-{row['encoding']}",
+        bundle="C", benchmark="cylinder", method="pinn", representation="scalar",
+        optimizer=optimizer if case != "modern" else "soap+gradnorm+pts",
+        arch=f"{case}-w{cfg.hidden}d{cfg.layers}",
         seed=cfg.seed_inv, noise=cfg.obs_noise, gamma=0.0, beta=0.0,
         # The unknown is the scalar nu, so eps_f is its relative error.
         eps_f=float(out["rel_err"]), eps_u=None,
         converged=None, stop_reason="maxiter",
         **counters.as_dict(), **timer.as_dict(),
-        sub=row["sub"], nu_rec=float(out["nu_rec"]), nu_true=float(out["nu_true"]),
-        hidden=row["hidden"], layers=row["layers"], encoding=row["encoding"],
+        case=case, nu_rec=float(out["nu_rec"]), nu_true=nu_true,
+        restart_stop=out.get("restart_stop"), n_restarts_run=out.get("n_restarts_run"),
+        settle_band=settle_band, oracle_best_eps=oracle_best,
+        gradnorm=out.get("gradnorm"), pseudotime=out.get("pseudotime"),
         cfg_snapshot=cfg.snapshot(),
     )
 

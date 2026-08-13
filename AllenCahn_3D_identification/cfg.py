@@ -58,6 +58,17 @@ class AllenCahn3DConfig:
     layers_S: int = 2
     act_S: str = "tanh"
 
+    # Architecture study (referees R1.5, R3.4). act_* also accepts "adaptive"
+    # (layer-wise L-LAAF). fourier_m_U = 0 disables the Fourier embedding, which is
+    # applied to the state network only -- the unknown f(u) is a scalar function of
+    # one variable whose target is a cubic.
+    # Plateau stop across BFGS epochs; 0 keeps the fixed scipy_pinn_epochs budget.
+    pinn_epoch_plateau: int = 0
+    pinn_epoch_rtol: float = 1.0e-4
+
+    fourier_m_U: int = 0
+    fourier_scale_U: float = 1.0
+
     # Output paths
     adj_nn_path: str = "history/ac3d_adj_nn.npz"
     adj_nn_model: str = "history/ac3d_adj_nn.pt"

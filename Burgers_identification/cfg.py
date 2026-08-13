@@ -46,10 +46,32 @@ class BurgersConfig:
     pinn_adam_lr: float = 1e-3      # was hard-coded as a literal in train_pinn
     pinn_soap_lr: float = 3e-3      # SOAP's published default
 
-    # Hard wall-clock ceiling for the run-to-convergence protocol; None disables it.
-    # Runs that hit the cap are recorded converged=False rather than truncated
-    # silently. Set to 2x the SSBroyden baseline for this benchmark.
-    walltime_cap_s: float | None = None
+    # ---- run-to-saturation protocol for the first-order optimizers ----
+    # Adam and SOAP are run until the loss genuinely saturates, however long that
+    # takes, rather than to a fixed budget: a budget comparison answers "who is
+    # ahead at time T", which is not what R3.7 asks. The wall-clock below is only a
+    # safety ceiling so a pathological run cannot hold a node indefinitely.
+    walltime_cap_s: float | None = 8 * 3600.0
+
+    # ReduceLROnPlateau schedule. Decaying the rate is what lets a first-order
+    # method actually settle instead of oscillating around the minimum forever.
+    pinn_lr_factor: float = 0.3
+    pinn_lr_patience: int = 5_000      # steps without improvement before decaying
+    pinn_lr_min_ratio: float = 1e-5    # stop once lr falls below lr0 * this
+    pinn_plateau_steps: int = 50_000   # steps without improvement before stopping
+
+    # Diagnostics (relative errors) are expensive: computing them every step made
+    # them a significant share of a long Adam run's wall-clock, which would inflate
+    # its cost relative to the far fewer evaluations of the quasi-Newton path. They
+    # are recorded on a stride instead, and the timer excludes them.
+    pinn_diag_every: int = 100
+
+    # Adjoint-side plateau stop for the optimizer ablation. 0 disables it and
+    # the run goes to scipy_adj_nn_maxiter, which is the paper's behaviour.
+    # Every optimizer is still descending at iteration 400, so a fixed budget
+    # would compare them mid-flight rather than at convergence.
+    adj_plateau_window: int = 0
+    adj_plateau_rtol: float = 1e-8
 
     # ---------------- Adjoint optimizer (SciPy) ----------------
     scipy_adj_nn_maxiter: int = 400
@@ -74,6 +96,7 @@ class BurgersConfig:
 
     # ---------------- Paths ----------------
     adj_nn_path: str = "history/adj_nn.npz"
+    adj_grid_path: str = "history/adj_grid.npz"
     pinn_scipy_path: str = "history/pinn_scipy.npz"
     pinn_scipy_model: str = "history/pinn_scipy.pt"
 

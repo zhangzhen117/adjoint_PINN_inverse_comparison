@@ -53,6 +53,11 @@ def _run_cylinder(seed):
 
     cfg = CylinderRunConfig()
     cfg.seed_inv = 44 + seed
+    # Inputs by absolute path: the cylinder's defaults are relative to the CWD,
+    # which for a sweep is the repo root. The cached 807 s warmup is reused.
+    cyl_hist = os.path.join(REPO, "cylinder", "history")
+    cfg.saturated_path = os.path.join(cyl_hist, "saturated.npz")
+    cfg.obs_path = os.path.join(cyl_hist, "probe_obs.npz")
     cfg.hist_dir = run_dir
     cfg.fig_dir = fig_dir
     cfg.pinn_inv_npz = os.path.join(run_dir, "pinn_inv.npz")

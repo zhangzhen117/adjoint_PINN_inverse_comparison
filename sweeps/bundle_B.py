@@ -23,10 +23,18 @@ Three stages, of which the first two are dependency-free and run together:
   once B0 has landed. Its SSBroyden arm is already covered by bundle A's
   pinn/nn rows at the identical configuration, so it is not re-run here.
 
-All runs use the shared convergence rule: stop on a relative objective change below
-1e-8 over 500 evaluations, or at a hard cap of twice the SSBroyden baseline
-wall-clock. Runs hitting the cap are recorded converged=False and reported as
-non-converged rather than silently truncated.
+The first-order runs are driven to **saturation**, not to a budget. Each uses a
+ReduceLROnPlateau schedule and stops once the learning rate bottoms out or the loss
+stops improving at all; Adam can need on the order of 1e6 steps, which is expected.
+Alongside the converged value, each run reports its **saturation onset** -- the
+earliest point already within 1% of the final best -- because the tail of a
+first-order run can spend most of its wall-clock buying the last fraction of a
+percent, and the honest cost comparison needs both numbers.
+
+Relative-error diagnostics are computed on a stride and excluded from the reported
+wall-clock. Evaluating them every step made them a large share of a long Adam run
+and would have inflated its cost against the far fewer evaluations of the
+quasi-Newton path.
 """
 
 from __future__ import annotations
@@ -49,9 +57,17 @@ from sweeps._runner import cli                                     # noqa: E402
 SEEDS = (0, 1, 2, 3, 4)
 LR_GRID = (1e-3, 3e-3, 1e-2, 3e-2)
 
-# Measured SSBroyden baselines on this benchmark; the cap is twice these.
+# Measured SSBroyden baseline on this benchmark, for context in the write-up.
 PINN_BASELINE_S = 190.0
 ADJ_BASELINE_S = 934.0
+# Safety ceiling for the first-order runs -- not a comparison budget. Adam can need
+# on the order of 1e6 steps here, and that is expected; this only stops a
+# pathological run from occupying a node indefinitely.
+SAFETY_CAP_S = 8 * 3600.0
+# Adjoint side: generous iteration ceiling with a plateau stop doing the real
+# work. At 2.33 s/iteration these are the expensive runs in the study.
+ADJ_MAXITER = 4000
+ADJ_PLATEAU_WINDOW = 150      # iterations without improvement before stopping
 
 
 def rows():
@@ -95,9 +111,16 @@ def run_one(row, index):
         representation="nn",
         pinn_optimizer=row["optimizer"] if is_pinn else "ssbroyden2",
         adjoint_optimizer=row["optimizer"] if not is_pinn else "ssbroyden2",
+        # Adjoint side: plateau-stopped rather than fixed-budget. At maxiter=400
+        # every optimizer is still descending (onset at iteration ~396/400), so the
+        # published budget compares them mid-flight.
+        scipy_adj_nn_maxiter=(ADJ_MAXITER if not is_pinn else 400),
+        adj_plateau_window=(ADJ_PLATEAU_WINDOW if not is_pinn else 0),
         pinn_adam_lr=row["lr"] if (is_pinn and row["lr"]) else 1e-3,
         pinn_soap_lr=row["lr"] if (is_pinn and row["lr"]) else 3e-3,
-        walltime_cap_s=2.0 * (PINN_BASELINE_S if is_pinn else ADJ_BASELINE_S),
+        # Safety ceiling only. First-order runs go to saturation, however long
+        # that takes; the adjoint path is bounded by scipy's own maxiter.
+        walltime_cap_s=SAFETY_CAP_S if is_pinn else None,
         adj_nn_path=os.path.join(hist_dir, f"adj_{tag}.npz"),
         pinn_scipy_path=os.path.join(hist_dir, f"pinn_{tag}.npz"),
         pinn_scipy_model=os.path.join(hist_dir, f"pinn_{tag}.pt"),
@@ -125,6 +148,13 @@ def run_one(row, index):
             counters.n_iter = h.get("nit", 0)
             counters.residual(cfg.n_interior * max(counters.n_fev, 1))
             converged, stop_reason = h.get("converged"), h.get("stop_reason")
+            # Where the curve effectively arrived, alongside where it finally
+            # stopped: a first-order run can spend most of its wall-clock on the
+            # last fraction of a percent, and both numbers belong in the table.
+            extra = {k: h.get(k) for k in
+                     ("sat_loss_time_s", "sat_loss_value", "sat_loss_step",
+                      "sat_eps_f_time_s", "sat_eps_f_value", "sat_eps_f_step",
+                      "diag_overhead_sec")}
         else:
             import adjoint_operator as A
             phi0 = A.get_init_phi(cfg)
@@ -136,7 +166,9 @@ def run_one(row, index):
             counters.n_iter = h.get("nit", 0)
             counters.forward(counters.n_fev)
             counters.adjoint(counters.n_fev)
-            converged, stop_reason = None, "maxiter"
+            converged = h.get("stop_reason") == "plateau"
+            stop_reason = h.get("stop_reason", "maxiter")
+            extra = {}
 
     counters.n_params = n_params
     # Only the dense-Hessian methods actually allocate this; recorded for all so the
@@ -159,6 +191,7 @@ def run_one(row, index):
         **counters.as_dict(), **timer.as_dict(),
         sub=row["sub"], side=row["side"], lr=row["lr"],
         walltime_cap_s=cfg.walltime_cap_s,
+        **extra,
         cfg_snapshot=cfg,
     )
 

@@ -92,6 +92,9 @@ class CylinderRunConfig:
     n_restarts_fwd: int = 20
     n_restarts_inv: int = 10
     maxiter: int = 200               # SSBroyden max iters per restart
+    # Plateau stop across SSBroyden restarts; 0 keeps the published fixed budget.
+    inv_restart_plateau: int = 0
+    inv_restart_rtol: float = 1e-6
     gtol_fwd: float = 1e-10
     gtol_inv: float = 1e-12
     nu0_pinn: float =  1.0          # inverse PINN cold-start nu (below truth)
@@ -108,6 +111,51 @@ class CylinderRunConfig:
     pinn_encoding: str = "none"          # "none" | "fourier"
     fourier_features: int = 32           # yields 2*fourier_features channels
     fourier_scale: float = 1.0
+
+    # ---- alternative training setup, after jaxpi2 (bundle C, second arm) ----
+    # github.com/sifanexisted/jaxpi2: gated "modified" MLP + SOAP + gradient-norm
+    # loss balancing + pseudo-time relaxation of the residual. Under the paper's
+    # own setup ("paper") only the production 32x3 network recovers nu at all, so
+    # running the same width/depth grid under a stronger setup is what makes the
+    # architecture question answerable rather than a measure of training fragility.
+    #
+    # Sized to the paper, NOT to jaxpi2's bfs_flow example: ModifiedMlp at 32x3
+    # without Fourier is 2563 parameters against the paper's 2307, whereas the
+    # reference 3x256+Fourier(256) config would be 526k.
+    # Three cases are compared in bundle C:
+    #   "paper"        -- the published setup: plain tanh MLP, Adam -> SSBroyden
+    #   "modern"       -- all of the jaxpi2 techniques at once: gated ModifiedMlp
+    #                     + SOAP + gradient-norm balancing + pseudo-time stepping
+    #   "vanilla_adam" -- plain tanh MLP trained with Adam alone, to show that a
+    #                     vanilla PINN does not solve the cylinder problem
+    pinn_setup: str = "paper"      # "paper" | "modern" | "vanilla_adam"
+    jaxpi_arch: str = "modified"   # "modified" | "plain"
+    jaxpi_optimizer: str = "soap"  # "soap" | "adam"
+    jaxpi_activation: str = "swish"
+    jaxpi_fourier: bool = False          # embed_dim = hidden when enabled
+    jaxpi_steps: int = 60_000
+    jaxpi_lr: float = 3e-3            # cyl_pinn_pt.py default
+    # 0.9 over 60k steps is only an 8x total decay, which left nu oscillating with
+    # ~1e-2 amplitude at the end of training -- the run passed through eps_nu ~ 3e-5
+    # but never settled there, and no truth-free criterion could pick that iterate.
+    # 0.7 gives ~1000x total decay in the same step budget, so the iterate freezes.
+    jaxpi_decay_rate: float = 0.7
+    jaxpi_decay_steps: int = 3000
+    jaxpi_warmup_steps: int = 2000
+    jaxpi_resample_every: int = 1000
+
+    # gradient-norm loss balancing. NOTE: the manuscript states all loss weights
+    # are unity; this is adaptive balancing and bears directly on referee R1.6.
+    jaxpi_gradnorm: bool = True
+    jaxpi_gradnorm_every: int = 500
+    jaxpi_gradnorm_momentum: float = 0.9
+
+    # pseudo-time relaxation of the PDE residual
+    jaxpi_pseudotime: bool = True
+    # Matched to cyl_pinn_pt.py: theta recomputed every 200 steps with momentum
+    # 0.7, while the previous iterate itself is refreshed every step.
+    jaxpi_pts_every: int = 200
+    jaxpi_pts_momentum: float = 0.7
 
     # ----------------------------------------------------------------- device
     device: str = field(default_factory=lambda: _torch_device())

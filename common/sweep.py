@@ -121,14 +121,31 @@ def _jsonable(obj: Any) -> Any:
 def append_record(path: str, record: dict[str, Any]) -> None:
     """Append one record as a JSON line, creating parent directories as needed.
 
-    Opened in append mode with a single ``write`` of one line, so concurrent SLURM
-    array tasks writing to the same file do not interleave: on Linux, an ``O_APPEND``
-    write below the pipe buffer size is atomic.
+    Takes an exclusive ``flock`` for the write. A single ``O_APPEND`` write below
+    PIPE_BUF is atomic on a local Linux filesystem, but the results live on
+    ``/oscar/data`` (a parallel filesystem), where that guarantee does not hold --
+    a 30-way array sweep produced exactly one torn line out of ~800 appends before
+    this lock was added. ``load_records`` also skips unparseable lines, so a
+    corrupted row degrades to one lost record rather than a broken analysis.
     """
+    import fcntl
+
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     line = json.dumps(_jsonable(record), sort_keys=False)
     with open(path, "a") as fh:
-        fh.write(line + "\n")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            pass          # locking unsupported here; fall back to a bare append
+        try:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        finally:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
 
 
 def load_records(pattern: str = "results/*.jsonl") -> "Any":

@@ -24,6 +24,10 @@ from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 
 from cylinder_solver import create_solver
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+from common.pinn_arch import ModifiedMlp, PlainMlp
+
 torch.set_default_dtype(torch.float64)
 
 
@@ -164,7 +168,16 @@ def train(cfg):
 
     W_IC, W_BC, W_PDE, W_DATA = cfg.w_ic, cfg.w_bc, cfg.w_pde, cfg.w_data
 
-    def loss_terms(model, pts):
+    def loss_terms(model, pts, anchor=None, pts_w=None, return_tensors=False):
+        """Composite loss.
+
+        ``return_tensors`` additionally yields the individual differentiable terms,
+        which gradient-norm balancing needs (it differentiates each one separately).
+        ``anchor`` supplies the pseudo-time relaxation: the momentum residuals are
+        augmented with ``pts_w * (u - u_prev)`` against a frozen earlier snapshot of
+        the model, which damps the stiff early transient. Only the residual is
+        anchored -- the data term keeps pulling on the real observations.
+        """
         nu = model.nu()
         x = tens(pts['pde'][:, 0], True); y = tens(pts['pde'][:, 1], True); t = tens(pts['pde'][:, 2], True)
         u, v, p = velocity(model, x, y, t); o = torch.ones_like(u)
@@ -177,6 +190,14 @@ def train(cfg):
         px = grad(p, x, o, create_graph=True)[0]; py = grad(p, y, o, create_graph=True)[0]
         ru = ut + u*ux + v*uy + px - nu*(uxx + uyy)
         rv = vt + u*vx + v*vy + py - nu*(vxx + vyy)
+        if anchor is not None and pts_w is not None and max(pts_w) > 0.0:
+            # u_prev = d(psi_prev)/dy still needs autograd through the *inputs*, so
+            # this cannot run under no_grad. The snapshot's parameters have
+            # requires_grad=False and the result is detached, so no gradient reaches
+            # the anchor -- it acts as a constant target.
+            u_prev, v_prev, _ = velocity(anchor, x, y, t)
+            ru = ru + pts_w[0] * (u - u_prev.detach())
+            rv = rv + pts_w[1] * (v - v_prev.detach())
         l_pde = torch.mean(ru**2 + rv**2)
         xi = tens(pts['ic'][:, 0], True); yi = tens(pts['ic'][:, 1], True); ti = tens(pts['ic'][:, 2], True)
         ui, vi, _ = velocity(model, xi, yi, ti); tgt = tens(pts['ic_uv'])
@@ -192,8 +213,12 @@ def train(cfg):
         ud, vd, _ = velocity(model, xd, yd, td)
         l_data = torch.mean((ud - tens(OBS_U))**2 + (vd - tens(OBS_V))**2)
         total = W_PDE*l_pde + W_IC*l_ic + W_BC*l_bc + W_DATA*l_data
-        return total, dict(pde=l_pde.item(), ic=l_ic.item(), bc=l_bc.item(),
-                           data=l_data.item(), nu=nu.item())
+        comp = dict(pde=l_pde.item(), ic=l_ic.item(), bc=l_bc.item(),
+                    data=l_data.item(), nu=nu.item())
+        if return_tensors:
+            return (total, comp, dict(pde=l_pde, ic=l_ic, bc=l_bc, data=l_data),
+                    dict(res=(ru, rv), sol=(u, v)))
+        return total, comp
 
     EVAL_XY = sample_fluid(20000)
     EVAL_REF = eval_uv(rf_lin, rf_nea, EVAL_XY)
@@ -202,6 +227,36 @@ def train(cfg):
         u, v, _ = velocity(model, x, y, t)
         up = np.column_stack([u.detach().cpu().numpy(), v.detach().cpu().numpy()])
         return float(np.sqrt(np.sum((up-EVAL_REF)**2))/np.sqrt(np.sum(EVAL_REF**2)))
+
+    class JaxpiNet(nn.Module):
+        """Gated modified MLP + trainable theta = log nu, after jaxpi2.
+
+        Same streamfunction-pressure output and the same nu parameterization as
+        Net, so the two setups differ only in architecture and training, not in
+        what is being solved for.
+        """
+        def __init__(self, h=HIDDEN, L=LAYERS, nu0=NU0):
+            super().__init__()
+            fe = {"embed_dim": h, "embed_scale": 1.0} if cfg.jaxpi_fourier else None
+            if cfg.jaxpi_arch.lower() == "plain":
+                # Vanilla arm: the paper's own tanh MLP, so the only difference
+                # from the published run is the optimizer.
+                self.net = PlainMlp(3, 2, hidden_dim=h, num_layers=L,
+                                    activation="tanh", fourier_emb=fe)
+            else:
+                self.net = ModifiedMlp(3, 2, hidden_dim=h, num_layers=L,
+                                       activation=cfg.jaxpi_activation, fourier_emb=fe)
+            self.theta = nn.Parameter(torch.tensor(float(np.log(nu0))))
+        def nu(self):
+            return torch.exp(self.theta)
+        def raw(self, x, y, t):
+            xs = (x - X0)/(X1 - X0)*2 - 1; ys = y/Y1; ts = t/T*2 - 1
+            out = self.net(torch.stack([xs, ys, ts], dim=-1))
+            return out[..., 0], out[..., 1]
+
+    if cfg.pinn_setup.lower() in ("jaxpi", "modern", "vanilla_adam"):
+        return _train_jaxpi(cfg, JaxpiNet, loss_terms, rel_l2_T, sample_points,
+                            NU_TRUE, NU0, DEV)
 
     # ----------------------------------------- cold start: Adam -> SSBroyden2
     model = Net(HIDDEN, LAYERS, nu0=NU0).to(DEV)
@@ -240,6 +295,14 @@ def train(cfg):
             n = p.numel(); p.data = tens(flat[i:i+n].reshape(p.shape)); i += n
 
     N_RESTARTS, MAXITER = cfg.n_restarts_inv, cfg.maxiter
+    # Optional plateau stop across restarts. The published configuration runs a
+    # fixed 10 restarts and its loss is still descending when it stops, so it is a
+    # fixed-budget result rather than a converged one. Setting
+    # inv_restart_plateau > 0 keeps restarting until the loss stops improving,
+    # which is what the "paper_converged" arm of bundle C uses.
+    plateau_n = getattr(cfg, "inv_restart_plateau", 0)
+    plateau_rtol = getattr(cfg, "inv_restart_rtol", 1e-6)
+    best_loss, best_r, restart_stop = float("inf"), 0, "maxrestarts"
     for r in range(N_RESTARTS):
         pts = sample_points(N_PDE, N_BC)
         cur = {}
@@ -273,7 +336,16 @@ def train(cfg):
         print(" -- restart %d done: nit=%d loss=%.3e nu=%.6f relnu=%.3e rel_L2(T)=%.3e"
               % (r, res.nit, cur.get('loss', np.nan), nu_r, abs(nu_r-NU_TRUE)/NU_TRUE,
                  rel_l2_T(model)), flush=True)
-    print("SSBroyden done %.1fs" % (time.time()-t0), flush=True)
+        if plateau_n:
+            lr_now = float(cur.get('loss', np.nan))
+            if np.isfinite(lr_now) and lr_now < best_loss * (1.0 - plateau_rtol):
+                best_loss, best_r = lr_now, r
+            elif r - best_r >= plateau_n:
+                restart_stop = "plateau"
+                print(" -- restart plateau: no improvement in %d restarts, stopping"
+                      % plateau_n, flush=True)
+                break
+    print("SSBroyden done %.1fs (stop=%s)" % (time.time()-t0, restart_stop), flush=True)
     runtime = time.time() - t_start
 
     nu_final = model.nu().item()
@@ -316,4 +388,166 @@ def train(cfg):
 
     return dict(model=model, nu_rec=nu_final, nu_true=NU_TRUE,
                 rel_err=abs(nu_final-NU_TRUE)/NU_TRUE, runtime_sec=runtime,
-                hist=hist, T=T, t0a=t0a, probe_xy=probe_xy)
+                hist=hist, T=T, t0a=t0a, probe_xy=probe_xy,
+                restart_stop=restart_stop, n_restarts_run=r + 1)
+
+
+# ============================================================================
+# jaxpi2-style training loop (bundle C, second arm)
+# ============================================================================
+
+def _train_jaxpi(cfg, NetCls, loss_terms, rel_l2_T, sample_points,
+                 NU_TRUE, NU0, DEV):
+    """SOAP + gradient-norm balancing + pseudo-time relaxation.
+
+    Reimplements the recipe from github.com/sifanexisted/jaxpi2 in PyTorch. The
+    reference is jax/flax and targets forward problems; the one adaptation for our
+    inverse setting is that only the PDE residual is anchored in pseudo-time, so
+    the sparse probe observations always pull on the true solution.
+
+    Sized to the paper rather than to the reference example -- see cylinder_config.
+    """
+    import os
+    import time
+
+    import matplotlib.pyplot as plt
+
+    from common.gradnorm import GradNormWeighter
+    from common.pseudotime import PseudoTimeStepper
+    from common.soap import SOAP
+
+    model = NetCls().to(DEV)
+    nparam = sum(p.numel() for p in model.parameters())
+    print("setup=%s arch=%s opt=%s gradnorm=%s pseudotime=%s | %d params, nu0=%.4f"
+          % (cfg.pinn_setup, cfg.jaxpi_arch, cfg.jaxpi_optimizer,
+             cfg.jaxpi_gradnorm, cfg.jaxpi_pseudotime, nparam, NU0), flush=True)
+
+    if cfg.jaxpi_optimizer.lower() == "adam":
+        opt = torch.optim.Adam(model.parameters(), lr=cfg.jaxpi_lr)
+    else:
+        opt = SOAP(model.parameters(), lr=cfg.jaxpi_lr,
+                   precondition_frequency=5,      # cyl_pinn_pt.py default
+                   precondition_1d=True, weight_decay=0.0)
+    # Linear warmup then exponential decay, as in the reference config.
+    def lr_at(step):
+        if step < cfg.jaxpi_warmup_steps:
+            return (step + 1) / max(1, cfg.jaxpi_warmup_steps)
+        k = (step - cfg.jaxpi_warmup_steps) / cfg.jaxpi_decay_steps
+        return cfg.jaxpi_decay_rate ** k
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_at)
+
+    keys = ("pde", "ic", "bc", "data")
+    weighter = (GradNormWeighter(keys, model.parameters(),
+                                 update_every=cfg.jaxpi_gradnorm_every,
+                                 momentum=cfg.jaxpi_gradnorm_momentum)
+                if cfg.jaxpi_gradnorm else None)
+    if weighter is not None:
+        # Start from the paper's weights so step 0 is the same problem.
+        weighter.weights.update(dict(pde=cfg.w_pde, ic=cfg.w_ic,
+                                     bc=cfg.w_bc, data=cfg.w_data))
+
+    stepper = (PseudoTimeStepper(n_components=2,
+                                 update_every=cfg.jaxpi_pts_every,
+                                 momentum=cfg.jaxpi_pts_momentum)
+               if cfg.jaxpi_pseudotime else None)
+    if stepper is not None:
+        stepper.refresh(model)
+
+    hist = {'it': [], 'loss': [], 'pde': [], 'ic': [], 'bc': [], 'data': [],
+            'err': [], 'nu': [], 'phase': [], 'w': [], 'theta': []}
+    pts = sample_points(cfg.n_pde, cfg.n_bc)
+    t_start = time.time()
+
+    for step in range(cfg.jaxpi_steps):
+        if step > 0 and step % cfg.jaxpi_resample_every == 0:
+            pts = sample_points(cfg.n_pde, cfg.n_bc)
+
+        theta = stepper.theta if (stepper is not None and stepper.active) else None
+        prev = stepper.prev if stepper is not None else None
+
+        opt.zero_grad(set_to_none=True)
+        _, comp, terms, raw = loss_terms(model, pts, anchor=prev, pts_w=theta,
+                                         return_tensors=True)
+
+        if weighter is not None and weighter.should_update(step):
+            weighter.update(terms)
+        total = (weighter.weighted_total(terms) if weighter is not None
+                 else cfg.w_pde*terms['pde'] + cfg.w_ic*terms['ic']
+                      + cfg.w_bc*terms['bc'] + cfg.w_data*terms['data'])
+        total.backward()
+        opt.step()
+        sched.step()
+
+        if stepper is not None:
+            # theta = ||dR|| / ||du|| between the current and previous iterate,
+            # recomputed on a cadence because it costs two extra residual passes.
+            if stepper.should_update(step):
+                with torch.enable_grad():
+                    _, _, _, raw_now = loss_terms(model, pts, return_tensors=True)
+                    _, _, _, raw_prev = loss_terms(stepper.prev, pts, return_tensors=True)
+                res_now = [r.detach() for r in raw_now['res']]
+                res_prev = [r.detach() for r in raw_prev['res']]
+                sol_now = [u.detach() for u in raw_now['sol']]
+                sol_prev = [u.detach() for u in raw_prev['sol']]
+                losses = [float((r**2).mean()) for r in res_now]
+                stepper.update_theta(res_now, res_prev, sol_now, sol_prev, losses)
+            # The previous iterate is refreshed EVERY step: that is what makes the
+            # relaxation a pseudo-time derivative rather than a stale anchor.
+            stepper.refresh(model)
+
+        if (step + 1) % cfg.print_every == 0 or step == 0:
+            err = rel_l2_T(model)
+            hist['it'].append(step + 1); hist['loss'].append(float(total.detach()))
+            for k in ('pde', 'ic', 'bc', 'data'):
+                hist[k].append(comp[k])
+            hist['err'].append(err); hist['nu'].append(comp['nu'])
+            hist['phase'].append('jaxpi')
+            hist['w'].append(dict(weighter.weights) if weighter else {})
+            hist['theta'].append(list(stepper.theta) if stepper else [])
+            if (step + 1) % (20 * cfg.print_every) == 0 or step == 0:
+                wtxt = (" w=" + ",".join(f"{k}:{v:.2e}" for k, v in weighter.weights.items())
+                        ) if weighter else ""
+                ttxt = (" th=" + ",".join(f"{t:.2e}" for t in stepper.theta)) if stepper else ""
+                print("  it %6d: loss=%.3e pde=%.2e data=%.2e nu=%.6f relnu=%.3e "
+                      "rel_L2(T)=%.3e lr=%.2e%s%s"
+                      % (step + 1, hist['loss'][-1], comp['pde'], comp['data'],
+                         comp['nu'], abs(comp['nu']-NU_TRUE)/NU_TRUE, err,
+                         opt.param_groups[0]['lr'], ttxt, wtxt), flush=True)
+
+    runtime = time.time() - t_start
+    nu_final = float(model.nu().item())
+    print("jaxpi done %.1fs nu=%.8f rel=%.3e"
+          % (runtime, nu_final, abs(nu_final-NU_TRUE)/NU_TRUE), flush=True)
+
+    os.makedirs(cfg.fig_dir, exist_ok=True)
+    os.makedirs(cfg.hist_dir, exist_ok=True)
+    it = np.array(hist['it'])
+    fig, ax = plt.subplots(1, 3, figsize=(16, 4))
+    ax[0].semilogy(it, hist['loss'], label='total')
+    ax[0].semilogy(it, hist['pde'], '--', alpha=0.7, label='PDE residual')
+    ax[0].semilogy(it, hist['data'], ':', alpha=0.9, label='probe-data misfit')
+    ax[0].set_xlabel('iteration'); ax[0].set_ylabel('loss'); ax[0].legend()
+    ax[0].set_title('jaxpi setup: training loss'); ax[0].grid(alpha=0.3, which='both')
+    ax[1].plot(it, hist['nu']); ax[1].axhline(NU_TRUE, color='r', ls='--', lw=1)
+    ax[1].set_xlabel('iteration'); ax[1].set_ylabel('nu'); ax[1].grid(alpha=0.3)
+    ax[1].set_title('viscosity convergence')
+    ax[2].semilogy(it, np.abs(np.array(hist['nu'])-NU_TRUE)/NU_TRUE)
+    ax[2].set_xlabel('iteration'); ax[2].set_ylabel('rel nu error')
+    ax[2].set_title('runtime %ds' % int(runtime)); ax[2].grid(alpha=0.3, which='both')
+    fig.tight_layout()
+    fig.savefig(os.path.join(cfg.fig_dir, "pinn_inv_train_jaxpi.png"), dpi=120)
+    plt.close(fig)
+
+    np.savez(cfg.pinn_inv_npz, nu_true=NU_TRUE, nu_rec=nu_final, nu0=NU0,
+             it=it, loss=np.array(hist['loss']), pde=np.array(hist['pde']),
+             ic=np.array(hist['ic']), bc=np.array(hist['bc']),
+             data=np.array(hist['data']), err=np.array(hist['err']),
+             nu=np.array(hist['nu']), runtime_sec=runtime,
+             setup='jaxpi', cfg_snapshot=str(cfg.snapshot()))
+    torch.save(model.state_dict(), cfg.pinn_inv_model)
+
+    return dict(model=model, nu_rec=nu_final, nu_true=NU_TRUE,
+                rel_err=abs(nu_final-NU_TRUE)/NU_TRUE, runtime_sec=runtime,
+                hist=hist, T=None, t0a=None, probe_xy=None,
+                gradnorm=(weighter.state() if weighter else None),
+                pseudotime=(stepper.state() if stepper else None))

@@ -366,8 +366,29 @@ def invert_force_adjoint_grid(u0, uT_target, cfg, s0_coarse=None):
 
     s_opt_coarse = res.x.astype(float)
     s_opt_fine = P @ s_opt_coarse
+    # No plateau stopper on this path: it runs the configured iteration budget.
+    history["stop_reason"] = "maxiter"
     history["nfev"] = int(getattr(res, "nfev", len(history["evals"])))
     history["nit"] = int(getattr(res, "nit", len(history["iters"])))
+
+    # Persist the trajectory in the same layout as the NN adjoint, so the
+    # convergence figure and the loss-versus-error diagnostics read both paths the
+    # same way. Previously only the final values survived the run.
+    if getattr(cfg, "adj_grid_path", None):
+        os.makedirs(os.path.dirname(cfg.adj_grid_path) or ".", exist_ok=True)
+        ev, it_ = history["evals"], history["iters"]
+        np.savez_compressed(
+            cfg.adj_grid_path,
+            s_opt_coarse=s_opt_coarse, force_opt=s_opt_fine,
+            eval_loss=np.array([e["loss"] for e in ev]),
+            eval_grad_norm=np.array([e["grad_norm"] for e in ev]),
+            eval_rel_l2_f=np.array([e["rel_l2_f"] for e in ev]),
+            iter_loss=np.array([i["loss"] for i in it_]),
+            iter_grad_norm=np.array([i["grad_norm"] for i in it_]),
+            iter_rel_l2_f=np.array([i["rel_l2_f"] for i in it_]),
+            runtime_sec=np.array(history["runtime_sec"]),
+            cfg_snapshot=asdict(cfg),
+        )
     return s_opt_coarse, s_opt_fine, history
 
 
@@ -431,17 +452,54 @@ def invert_force_adjoint(u0, uT_target, cfg, phi0, n_steps_warmup=0):
 
     # Quasi-Newton phase. The optimizer is selected by cfg.adjoint_optimizer so the
     # same code path serves the baseline and the bundle-B optimizer ablation.
+    #
+    # For the optimizer ablation the run must reach a plateau rather than stop at a
+    # fixed iteration count: at maxiter=400 every optimizer here is still descending
+    # (saturation onset lands at iteration ~396 of 400), so a fixed budget compares
+    # them mid-flight. cfg.adj_plateau_window > 0 enables a callback-driven stop on
+    # relative improvement, with the iteration count as a backstop.
+    stop_state = {"reason": "maxiter", "best": float("inf"), "best_k": 0}
+    phi_last = {"x": np.asarray(phi0, dtype=float)}
+
+    def cb_stop(phi_k):
+        phi_last["x"] = np.asarray(phi_k, dtype=float)
+        cb(phi_k)
+        w = getattr(cfg, "adj_plateau_window", 0)
+        if not w:
+            return
+        k = len(history["iters"])
+        cur = last_eval.get("loss")
+        if cur is None:
+            return
+        if cur < stop_state["best"] * (1.0 - getattr(cfg, "adj_plateau_rtol", 1e-8)):
+            stop_state["best"], stop_state["best_k"] = cur, k
+        elif k - stop_state["best_k"] >= w:
+            stop_state["reason"] = "plateau"
+            # scipy >= 1.11 terminates the minimization cleanly on StopIteration
+            # raised from the callback.
+            raise StopIteration
+
     print(f"Starting {cfg.adjoint_optimizer} optimization...")
-    res = minimize(
-        fun=fun_with_hist, x0=phi0, jac=True,
-        callback=cb, tol=cfg.scipy_ftol,
-        **minimize_kwargs(cfg, len(phi0)),
-    )
+    try:
+        res = minimize(
+            fun=fun_with_hist, x0=phi0, jac=True,
+            callback=cb_stop, tol=cfg.scipy_ftol,
+            **minimize_kwargs(cfg, len(phi0)),
+        )
+    except StopIteration:
+        # Reconstruct a minimal result from the recorded history.
+        class _R:
+            pass
+        res = _R()
+        res.x = np.asarray(phi_last["x"], dtype=float)
+        res.nfev = k_eval["count"]
+        res.nit = len(history["iters"])
 
     t1 = time.perf_counter()
     history["runtime_sec"] = t1 - t0
     # Function evaluations and iterations are distinct quantities and referee R3.2
     # asks for both; the manuscript currently conflates them.
+    history["stop_reason"] = stop_state["reason"]
     history["nfev"] = int(getattr(res, "nfev", len(history["evals"])))
     history["nit"] = int(getattr(res, "nit", len(history["iters"])))
 

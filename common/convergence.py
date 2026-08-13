@@ -102,3 +102,102 @@ class ConvergenceMonitor:
             "n_evals_monitored": self.n_evals,
             "elapsed_s": self.elapsed_s,
         }
+
+
+class PlateauStopper:
+    """Run a first-order optimizer until the loss genuinely saturates.
+
+    A fixed wall-clock cap answers "who is best on this budget", not "who converges
+    where" -- and every capped run has to be reported as non-converged, which is a
+    weak answer to R3.7. This stopper instead runs until the objective stops moving,
+    however long that takes. Adam in particular can need on the order of 1e6 steps.
+
+    Stopping, in order of precedence:
+
+    1. **Learning-rate floor.** Used together with ``ReduceLROnPlateau``: once the
+       schedule has decayed the rate below ``lr_min_ratio`` of its initial value,
+       further steps cannot move the iterate meaningfully.
+    2. **No improvement.** The best loss so far has not improved by more than
+       ``rel_improve`` (relative) for ``patience_steps`` consecutive steps.
+    3. **Safety cap.** A generous wall-clock ceiling, present only so a pathological
+       run cannot occupy a node indefinitely. Reaching it is reported, not hidden.
+
+    Unlike a budget cap, hitting 1 or 2 counts as convergence.
+    """
+
+    def __init__(self, lr0: float, lr_min_ratio: float = 1e-5,
+                 patience_steps: int = 50_000, rel_improve: float = 1e-6,
+                 max_seconds: float | None = None):
+        self.lr0 = float(lr0)
+        self.lr_min = float(lr0) * float(lr_min_ratio)
+        self.patience_steps = int(patience_steps)
+        self.rel_improve = float(rel_improve)
+        self.max_seconds = max_seconds
+
+        self.best = float("inf")
+        self.best_step = 0
+        self.n_steps = 0
+        self._t0 = time.perf_counter()
+        self.stop_reason: str | None = None
+
+    @property
+    def elapsed_s(self) -> float:
+        return time.perf_counter() - self._t0
+
+    @property
+    def converged(self) -> bool:
+        """True for a genuine plateau; False when the safety cap intervened."""
+        return self.stop_reason in ("lr_floor", "no_improvement")
+
+    def update(self, loss: float, lr: float) -> bool:
+        self.n_steps += 1
+        loss = float(loss)
+
+        if loss < self.best * (1.0 - self.rel_improve):
+            self.best = min(self.best, loss)
+            self.best_step = self.n_steps
+        elif loss < self.best:
+            self.best = loss          # tiny improvement: track it, do not reset patience
+
+        if lr <= self.lr_min:
+            self.stop_reason = "lr_floor"
+            return True
+        if self.n_steps - self.best_step >= self.patience_steps:
+            self.stop_reason = "no_improvement"
+            return True
+        if self.max_seconds is not None and self.elapsed_s >= self.max_seconds:
+            self.stop_reason = "safety_cap"
+            return True
+        return False
+
+
+def saturation_onset(times, values, tol: float = 0.01):
+    """Locate where a monotone-ish descent curve flattens out.
+
+    Running to full convergence is the right protocol, but the tail of a
+    first-order run can spend most of its wall-clock buying the last fraction of a
+    percent. The useful quantity to report alongside the converged value is
+    therefore *when the curve effectively arrived*: the earliest point whose
+    best-so-far value is already within ``tol`` (relative) of the final best.
+
+    Returns ``(index, time, value)``, or ``(None, None, None)`` for an empty input.
+    Operates on the running minimum, so noise in the raw trace cannot pull the
+    onset later than it should be.
+    """
+    if values is None or len(values) == 0:
+        return None, None, None
+
+    running_best = []
+    b = float("inf")
+    for v in values:
+        b = min(b, float(v))
+        running_best.append(b)
+
+    final = running_best[-1]
+    # Scale-free threshold; `final` can legitimately be ~0.
+    target = final * (1.0 + tol) if final > 0 else final + tol
+
+    for i, b in enumerate(running_best):
+        if b <= target:
+            return i, (times[i] if times is not None else None), values[i]
+    return len(values) - 1, (times[-1] if times is not None else None), values[-1]

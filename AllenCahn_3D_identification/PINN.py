@@ -19,21 +19,50 @@ except ImportError:  # benchmark dir without the repo on the path
     import sys as _sys
     _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from common.seeding import set_seed
+from common.pinn_arch import AdaptiveActivation, FourierEmbedding
 from solver import reaction_true, rel_l2_error
 
 torch.set_default_dtype(torch.float64)
 
 
 class MLP(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, hidden: int, layers: int, act: str = "tanh"):
+    """Plain MLP, optionally with a Fourier input embedding and/or an adaptive
+    activation, for the architecture study of referees R1.5 and R3.4.
+
+    ``act`` accepts "tanh", "gelu", "silu" or "adaptive" (layer-wise L-LAAF with a
+    tanh base). ReLU is deliberately not offered: the Allen-Cahn residual needs
+    d2u/dx2 and ReLU's second derivative vanishes almost everywhere, so the PDE
+    loss would be identically zero rather than merely poor.
+
+    ``fourier`` is ``None`` or ``{"embed_dim": m, "embed_scale": s}``, prepending
+    [sin(Bx), cos(Bx)] with fixed B ~ N(0, s^2).
+    """
+
+    def __init__(self, in_dim: int, out_dim: int, hidden: int, layers: int,
+                 act: str = "tanh", fourier: dict | None = None):
         super().__init__()
-        acts = {"tanh": nn.Tanh, "relu": nn.ReLU, "gelu": nn.GELU, "silu": nn.SiLU}
-        activation = acts.get(act.lower(), nn.Tanh)
-        dims = [in_dim] + [hidden] * layers + [out_dim]
+        self.embed = None
+        d = in_dim
+        if fourier:
+            self.embed = FourierEmbedding(in_dim, **fourier)
+            d = self.embed.out_dim
+
+        name = act.lower()
+        if name == "relu":
+            raise ValueError("ReLU has a vanishing second derivative; the PDE "
+                             "residual for Allen-Cahn requires d2u/dx2")
+        acts = {"tanh": nn.Tanh, "gelu": nn.GELU, "silu": nn.SiLU}
+        if name == "adaptive":
+            make_act = lambda: AdaptiveActivation("tanh", n=10.0)
+        else:
+            cls = acts.get(name, nn.Tanh)
+            make_act = cls
+
+        dims = [d] + [hidden] * layers + [out_dim]
         modules = []
         for idx in range(len(dims) - 2):
             modules.append(nn.Linear(dims[idx], dims[idx + 1]))
-            modules.append(activation())
+            modules.append(make_act())
         modules.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*modules)
         for module in self.net:
@@ -43,6 +72,8 @@ class MLP(nn.Module):
                     nn.init.zeros_(module.bias)
 
     def forward(self, x):
+        if self.embed is not None:
+            x = self.embed(x)
         return self.net(x)
 
 
@@ -211,7 +242,9 @@ def eval_S_error(S_phi, device):
 
 def build_models(cfg: AllenCahn3DConfig):
     device = cfg.device
-    U_theta = MLP(4, 1, cfg.hidden_U, cfg.layers_U, cfg.act_U).to(device).double()
+    fe = ({"embed_dim": cfg.fourier_m_U, "embed_scale": cfg.fourier_scale_U}
+          if getattr(cfg, "fourier_m_U", 0) else None)
+    U_theta = MLP(4, 1, cfg.hidden_U, cfg.layers_U, cfg.act_U, fourier=fe).to(device).double()
     S_phi = MLP(1, 1, cfg.hidden_S, cfg.layers_S, cfg.act_S).to(device).double()
     return U_theta, S_phi
 
@@ -360,6 +393,16 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: AllenCahn3DConfig) ->
 
     H0 = np.eye(len(theta0))
     bfgs_state = {"epoch": 0}
+    # Plateau stop across outer epochs. A fixed epoch budget compares
+    # configurations at an arbitrary point rather than at convergence: with
+    # cfg.scipy_pinn_epochs = 15 the baseline is nearly flat but slower variants
+    # are still improving by 10-20% in their final epochs, so any ranking would
+    # measure the budget instead of the architecture. Set
+    # cfg.pinn_epoch_plateau > 0 to stop once the loss stops improving.
+    plateau_n = getattr(cfg, "pinn_epoch_plateau", 0)
+    plateau_rtol = getattr(cfg, "pinn_epoch_rtol", 1.0e-4)
+    epoch_best, epoch_best_i = float("inf"), 0
+    history["stop_reason"] = "maxepochs"
     for epoch in range(1, cfg.scipy_pinn_epochs + 1):
         bfgs_state["epoch"] = epoch
         iter_state["bfgs_iter"] = 0
@@ -398,9 +441,20 @@ def train_pinn(u0: np.ndarray, uT_target: np.ndarray, cfg: AllenCahn3DConfig) ->
                 epoch=epoch,
             )
 
+        if plateau_n:
+            cur = float(final_row.get("loss", float("nan"))) if final_row else float("nan")
+            if cur == cur and cur < epoch_best * (1.0 - plateau_rtol):
+                epoch_best, epoch_best_i = cur, epoch
+            elif epoch - epoch_best_i >= plateau_n:
+                history["stop_reason"] = "plateau"
+                print(f"[PINN][bfgs] plateau: no improvement in {plateau_n} epochs, "
+                      f"stopping at epoch {epoch}", flush=True)
+                break
+
         batch = _make_fixed_batch(cfg, device, xyz_t, u0_t, xyz_t, uT_t,
                                   seed=epoch + 12345 + 1000 * int(cfg.seed))
 
+    history["epochs_run"] = epoch
     t1 = time.perf_counter()
     history["runtime_sec"] = t1 - t0
 

@@ -1,0 +1,145 @@
+==============================================================================
+Cylinder observation grid-independence study -- OpenFOAM v2512, Re = 100
+==============================================================================
+
+[0] Mesh family (refinement ratio 1.5 per level)
+
+  level     cells     h_eff
+  L1         7616   0.10069
+  L2        17136   0.06713
+  L3        38556   0.04475
+  L4        86913   0.02981
+  L5       195432   0.01988
+
+  L1     dt = 0.005
+  L2     dt = 0.005
+  L3     dt = 0.005
+  L4     dt = 0.005
+  L5     dt = 0.0025
+  NOTE: L5 runs at half the time step because Courant scales as 1/h
+  across this family and dt = 0.005 would put it above 1. The dt arm
+  below quantifies how much that matters; if the temporal error is
+  small compared with the spatial differences, mixing the two is safe.
+  realized h ratios: 1.5000, 1.5000, 1.5014, 1.4995
+
+[1] Limit-cycle invariants
+
+  case                  St   mean Cd    Cl amp  cycles
+  L1               0.18981   1.69820   0.46345     8.5
+  L2               0.19353   1.70217   0.46609     8.7
+  L3               0.19520   1.70396   0.46746     8.8
+  L4               0.19593   1.70467   0.46798     8.8
+  L5               0.19625   1.70504   0.46832     8.8
+  L3dt0.0025       0.19521   1.70396   0.46747     8.8
+  L3dt0.00125      0.19521   1.70397   0.46748     8.8
+
+  St       p = 1.95     extrapolated = 0.1965256  GCI(L4) = 0.173%
+        L1:   3.4167% from extrapolated (L3,L4,L5)
+        L2:   1.5226% from extrapolated (L3,L4,L5)
+        L3:   0.6732% from extrapolated (L3,L4,L5)
+        L4:   0.3048% from extrapolated (L3,L4,L5)
+        L5:   0.1380% from extrapolated (L3,L4,L5)
+
+  mean Cd  p = 1.54     extrapolated = 1.70548    GCI(L4) = 0.032%
+        L1:   0.4271% from extrapolated (L3,L4,L5)
+        L2:   0.1943% from extrapolated (L3,L4,L5)
+        L3:   0.0891% from extrapolated (L3,L4,L5)
+        L4:   0.0477% from extrapolated (L3,L4,L5)
+        L5:   0.0256% from extrapolated (L3,L4,L5)
+
+  Cl amp   p = 1.13     extrapolated = 0.4688863  GCI(L4) = 0.152%
+        L1:   1.1602% from extrapolated (L3,L4,L5)
+        L2:   0.5961% from extrapolated (L3,L4,L5)
+        L3:   0.3046% from extrapolated (L3,L4,L5)
+        L4:   0.1925% from extrapolated (L3,L4,L5)
+        L5:   0.1217% from extrapolated (L3,L4,L5)
+
+  time-step refinement on L3 (dt = 0.005 / 0.0025 / 0.00125, ratio 2):
+        St       0.195203  0.195205  0.195207   order 0.632  dt=0.005 is 0.0041% from the dt->0 limit
+        mean Cd  1.703961  1.703965  1.703970   order -0.357  dt=0.005 is 0.0008% from the dt->0 limit
+        Cl amp   0.467458  0.467473  0.467485   order 0.383  dt=0.005 is 0.0137% from the dt->0 limit
+
+[2] Phase-free probe statistics (time-mean and RMS)
+
+  Averaged over a whole number of shedding periods ending at t_end,
+  each mesh using its own period. Averaging over a fixed time window
+  instead leaves a partial cycle in the mean, and since the period
+  differs between meshes that residue does not shrink under refinement
+  -- it showed up as a non-monotone 5.4 / 2.7 / 3.3 % sequence.
+
+  L1      8 periods, n =   4215   ||mean|| = 3.61850   ||rms|| = 1.43459
+  L2      8 periods, n =   4134   ||mean|| = 3.66289   ||rms|| = 1.46924
+  L3      8 periods, n =   4099   ||mean|| = 3.65319   ||rms|| = 1.48739
+  L4      8 periods, n =   4084   ||mean|| = 3.63682   ||rms|| = 1.49573
+  L5      8 periods, n =   8153   ||mean|| = 3.63123   ||rms|| = 1.50175
+
+  time-mean probe vector (32 components):
+        ||L2-L1|| / ||L2|| =   6.1136%
+        ||L3-L2|| / ||L3|| =   1.1672%
+        ||L4-L3|| / ||L4|| =   2.3739%
+        ||L5-L4|| / ||L5|| =   0.4747%
+        observed order = 3.970   GCI(L5) = 0.1483%   <- spatial error, phase removed
+
+  RMS probe vector (32 components):
+        ||L2-L1|| / ||L2|| =   5.5954%
+        ||L3-L2|| / ||L3|| =   2.5720%
+        ||L4-L3|| / ||L4|| =   3.3009%
+        ||L5-L4|| / ||L5|| =   0.6938%
+        observed order = 3.847   GCI(L5) = 0.2308%   
+
+  The L2->L3->L4 sequence is not monotone -- the mean flow still
+  carries a startup-seeded asymmetry that each mesh damps at its own
+  rate, so differences in the mean mix discretization error with that
+  residue. It clears by L5. Any order quoted above is therefore an
+  upper bound read off the two finest levels, not a fitted rate; the
+  symmetry error below is the cleaner statement and needs no reference
+  solution at all.
+
+[3] Mean-flow symmetry error (exact answer: zero)
+
+  L1     asymmetry =  4.7947%
+  L2     asymmetry =  3.0515%
+  L3     asymmetry =  2.0097%
+  L4     asymmetry =  0.1537%
+  L5     asymmetry =  0.0822%
+  Monotone under refinement, so the mean is converging on the correct
+  symmetric flow; the rate is close to first order, much slower than
+  the second order seen in the integral quantities.
+
+[4] The PINN observation vector (16 probes x 10 times x 2 comps)
+
+  raw, every mesh sampled from t = 80 (NOT phase matched):
+        ||L2-L1|| / ||L2|| =  53.3314%
+        ||L3-L2|| / ||L3|| =  28.1684%
+        ||L4-L3|| / ||L4|| =  13.9005%
+        ||L5-L4|| / ||L5|| =   5.6494%
+        observed order = 2.22 (L3,L4,L5)   GCI(L5) = 4.8351%
+  
+  phase-matched (aligned on the last C_L upcrossing and scaled by each mesh's own period):
+        ||L2-L1|| / ||L2|| =   7.0009%
+        ||L3-L2|| / ||L3|| =   1.8225%
+        ||L4-L3|| / ||L4|| =   2.8694%
+        ||L5-L4|| / ||L5|| =   0.7732%
+        observed order = 3.23 (L3,L4,L5)   GCI(L5) = 0.3565%
+
+[5] The FEM data the PINN actually consumes
+
+        FEM St = 0.19656   OpenFOAM L5 St = 0.19625   (0.156% apart)
+  FEM mean-flow symmetry error = 0.8573%  (same measure as section [3])
+  FEM (h_cyl=0.04 production mesh, P2/P1) vs OpenFOAM L5
+        shedding period T = 5.0954
+        best phase-aligned relative difference = 0.423%   (shift 3.5184)
+        ||obs_FEM|| = 12.44151,  ||obs_OF|| = 12.42783
+
+  per-probe (the aggregate above is dominated by the free-stream probes):
+        worst component  2.15% of its local swing   (probe 0 ux)
+        median component 0.77% of local swing
+        max absolute discrepancy 0.00917 U_inf
+        RMS over all 320 entries 0.00294 U_inf
+        The largest residuals sit on the u_x component of the outer probes
+        at |y| = 1, on the wake edge where the mean profile is steepest.
+
+  For scale: the inverse problem reports eps_nu at the 1e-2 level (Table 2)
+  and 5e-3 (published single run). An observation error above ~1% would
+  put the data itself at the same order as the answer being certified.
+

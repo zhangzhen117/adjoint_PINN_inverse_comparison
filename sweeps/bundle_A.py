@@ -79,6 +79,7 @@ def run_one(row, index):
         seed=row["seed"],
         representation=row["representation"],
         adj_nn_path=os.path.join(hist_dir, f"adj_{tag}.npz"),
+        adj_grid_path=os.path.join(hist_dir, f"adj_{tag}.npz"),
         pinn_scipy_path=os.path.join(hist_dir, f"pinn_{tag}.npz"),
         pinn_scipy_model=os.path.join(hist_dir, f"pinn_{tag}.pt"),
     )

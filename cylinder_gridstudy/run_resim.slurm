@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name=cylresim
+#SBATCH --partition=batch
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=96G
+#SBATCH --time=04:00:00
+#SBATCH --output=logs/%x_%j.log
+
+# gmsh needs libGLU, which is present on the GPU nodes but not on batch.
+module load mesa-glu/9.0.2-ikgf
+# The repo venv is auto-activated by the login profile and shadows
+# `conda activate`, so call the conda interpreter by path. scipy lives in
+# opt_2nd; the venv has neither scipy nor a working matplotlib.
+PY_EXE=~/miniconda3/envs/opt_2nd/bin/python
+cd "$SLURM_SUBMIT_DIR"
+echo "=== $(date) on $(hostname) | $($PY_EXE -c 'import sys;print(sys.executable)') ==="
+$PY_EXE resim_eps_u.py
+echo "=== done $(date) ==="

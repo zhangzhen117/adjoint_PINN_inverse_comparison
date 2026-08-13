@@ -23,4 +23,20 @@ paper_overleaf/
 slurm-*.out
 
 # Sweep outputs (regenerate via sbatch slurm/run_sweep.sh)
-results/*_runs/
+results/*_runs*/
+
+# Scratch figures for inspection
+debug/
+
+# OpenFOAM case directories: 2.3 GB of decomposed mesh and per-processor field
+# output across seven meshes. Regenerate with
+#   python cylinder_gridstudy/mkcase.py && sbatch cylinder_gridstudy/run_grid.slurm
+# The derived results (grid_report.txt, *_data.npz, the inversion histories) are
+# small and are tracked.
+cylinder_gridstudy/cases/
+cylinder_gridstudy/logs/
+cylinder_gridstudy/figures/
+
+# Superseded or retracted run data, kept locally for provenance but not shipped
+*.jsonl.bak
+results/*_invalid*/

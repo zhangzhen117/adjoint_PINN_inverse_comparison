@@ -22,12 +22,14 @@ from solver import rel_l2_error, true_force
 
 try:
     from common.seeding import set_seed
-    from common.convergence import ConvergenceMonitor
+    from common.convergence import (ConvergenceMonitor, PlateauStopper,
+                                    saturation_onset)
 except ImportError:  # running from the benchmark directory without the repo on the path
     import sys as _sys
     _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from common.seeding import set_seed
-    from common.convergence import ConvergenceMonitor
+    from common.convergence import (ConvergenceMonitor, PlateauStopper,
+                                    saturation_onset)
 
 torch.set_default_dtype(torch.float64)
 
@@ -450,11 +452,20 @@ def train_pinn_firstorder(u0: np.ndarray, uT_target: np.ndarray,
     else:
         raise ValueError(f"train_pinn_firstorder does not handle {cfg.pinn_optimizer!r}")
 
-    monitor = ConvergenceMonitor(rel_tol=1e-8, window=500,
-                                 walltime_cap_s=cfg.walltime_cap_s)
+    lr0 = opt.param_groups[0]["lr"]
+    # Decay on plateau so the run can actually settle rather than oscillate around
+    # the minimum indefinitely; the stopper then ends it once the rate bottoms out
+    # or the loss stops improving at all.
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode="min", factor=cfg.pinn_lr_factor, patience=cfg.pinn_lr_patience,
+        threshold=1e-6, threshold_mode="rel", min_lr=lr0 * cfg.pinn_lr_min_ratio * 0.5)
+    stopper = PlateauStopper(
+        lr0=lr0, lr_min_ratio=cfg.pinn_lr_min_ratio,
+        patience_steps=cfg.pinn_plateau_steps, rel_improve=1e-6,
+        max_seconds=cfg.walltime_cap_s)
 
     history = {"adam": {k: [] for k in ("loss", "L_res", "L_ic", "L_bc", "L_data",
-                                        "rel_l2_uT", "rel_l2_f", "lr")},
+                                        "rel_l2_uT", "rel_l2_f", "lr", "step", "time")},
                "bfgs": {k: [] for k in ("loss", "grad_norm", "L_res", "L_ic", "L_bc",
                                         "L_data", "rel_l2_uT", "rel_l2_f")}}
 
@@ -471,6 +482,7 @@ def train_pinn_firstorder(u0: np.ndarray, uT_target: np.ndarray,
                               seed=12345 + int(cfg.seed))
 
     t0 = time.perf_counter()
+    diag_s = 0.0            # time spent on diagnostics, excluded from runtime_sec
     step = 0
     while True:
         if step > 0 and step % resample_every == 0:
@@ -483,28 +495,57 @@ def train_pinn_firstorder(u0: np.ndarray, uT_target: np.ndarray,
         step += 1
 
         loss_val = float(L.detach())
-        rel_uT, rel_f = rel_errors()
-        history["adam"]["loss"].append(loss_val)
-        for key in ("L_res", "L_ic", "L_bc", "L_data"):
-            history["adam"][key].append(Ldict[key])
-        history["adam"]["rel_l2_uT"].append(rel_uT)
-        history["adam"]["rel_l2_f"].append(rel_f)
-        history["adam"]["lr"].append(opt.param_groups[0]["lr"])
+        scheduler.step(loss_val)
+        lr_now = opt.param_groups[0]["lr"]
 
-        if step % 500 == 0:
-            print(f"[{name} {step:6d}] loss={loss_val:.3e} rel_uT={rel_uT:.3e} "
-                  f"rel_f={rel_f:.3e} t={monitor.elapsed_s:.0f}s", flush=True)
+        # Relative errors are only needed for the convergence curves, and computing
+        # them every step would make them a large share of a million-step run.
+        if step % cfg.pinn_diag_every == 0 or step == 1:
+            d0 = time.perf_counter()
+            rel_uT, rel_f = rel_errors()
+            diag_s += time.perf_counter() - d0
+            h = history["adam"]
+            h["step"].append(step)
+            h["time"].append(time.perf_counter() - t0 - diag_s)
+            h["loss"].append(loss_val)
+            for key in ("L_res", "L_ic", "L_bc", "L_data"):
+                h[key].append(Ldict[key])
+            h["rel_l2_uT"].append(rel_uT)
+            h["rel_l2_f"].append(rel_f)
+            h["lr"].append(lr_now)
 
-        if monitor.update(loss_val):
+            if step % (100 * cfg.pinn_diag_every) == 0:
+                print(f"[{name} {step:8d}] loss={loss_val:.3e} rel_f={rel_f:.3e} "
+                      f"lr={lr_now:.2e} t={time.perf_counter()-t0-diag_s:.0f}s",
+                      flush=True)
+
+        if stopper.update(loss_val, lr_now):
             break
 
-    history["runtime_sec"] = time.perf_counter() - t0
+    history["runtime_sec"] = time.perf_counter() - t0 - diag_s
+    history["diag_overhead_sec"] = diag_s
     history["nfev"] = step
     history["nit"] = step
-    history["converged"] = monitor.converged
-    history["stop_reason"] = monitor.stop_reason
-    print(f"[{name}] stopped after {step} steps: {monitor.stop_reason} "
-          f"({history['runtime_sec']:.0f}s)")
+    history["converged"] = stopper.converged
+    history["stop_reason"] = stopper.stop_reason
+
+    # Where the curve effectively arrived, as distinct from where it finally
+    # stopped: the tail of a first-order run can spend most of its wall-clock
+    # buying the last fraction of a percent.
+    times = history["adam"]["time"]
+    for label, series in (("loss", history["adam"]["loss"]),
+                          ("eps_f", history["adam"]["rel_l2_f"])):
+        idx, t_sat, v_sat = saturation_onset(times, series, tol=0.01)
+        history[f"sat_{label}_time_s"] = t_sat
+        history[f"sat_{label}_value"] = v_sat
+        history[f"sat_{label}_step"] = (history["adam"]["step"][idx]
+                                        if idx is not None else None)
+
+    print(f"[{name}] stopped after {step} steps: {stopper.stop_reason} "
+          f"(converged={stopper.converged}, {history['runtime_sec']:.0f}s "
+          f"+ {diag_s:.0f}s diagnostics)")
+    print(f"[{name}] saturation onset: loss at t={history['sat_loss_time_s']}s, "
+          f"eps_f={history['sat_eps_f_value']} at t={history['sat_eps_f_time_s']}s")
 
     os.makedirs(os.path.dirname(cfg.pinn_scipy_path) or ".", exist_ok=True)
     for phase in ("adam", "bfgs"):
