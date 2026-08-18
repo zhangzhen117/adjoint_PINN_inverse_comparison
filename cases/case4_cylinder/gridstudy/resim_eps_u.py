@@ -25,7 +25,7 @@ from scipy.sparse import bmat
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(REPO, "cylinder"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
 
 from cylinder_solver import CylinderConfig, create_solver   # noqa: E402
 

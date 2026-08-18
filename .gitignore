@@ -30,12 +30,12 @@ debug/
 
 # OpenFOAM case directories: 2.3 GB of decomposed mesh and per-processor field
 # output across seven meshes. Regenerate with
-#   python cylinder_gridstudy/mkcase.py && sbatch cylinder_gridstudy/run_grid.slurm
+#   python cases/case4_cylinder/gridstudy/mkcase.py && sbatch slurm/run_grid.slurm
 # The derived results (grid_report.txt, *_data.npz, the inversion histories) are
 # small and are tracked.
-cylinder_gridstudy/cases/
-cylinder_gridstudy/logs/
-cylinder_gridstudy/figures/
+cases/case4_cylinder/gridstudy/cases/
+cases/case4_cylinder/gridstudy/logs/
+cases/case4_cylinder/gridstudy/figures/
 
 # Superseded or retracted run data, kept locally for provenance but not shipped
 *.jsonl.bak

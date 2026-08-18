@@ -45,7 +45,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "cylinder"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
 
 from common.instrument import (Counters, RunTimer, require_l40s,  # noqa: E402
                                ssbroyden_hessian_bytes)
@@ -104,7 +104,7 @@ def run_one(row, index):
     # The cylinder's default paths are relative and resolve against the CWD, which
     # for a sweep is the repo root. Point the inputs at the cached warmup and
     # observation files -- the 807 s saturation run is reused, never recomputed.
-    cyl_hist = os.path.join(REPO, "cylinder", "history")
+    cyl_hist = os.path.join(REPO, "cases", "case4_cylinder", "history")
     cfg.saturated_path = os.path.join(cyl_hist, "saturated.npz")
     cfg.obs_path = os.path.join(cyl_hist, "probe_obs.npz")
     cfg.hist_dir = run_dir

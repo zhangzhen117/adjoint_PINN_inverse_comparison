@@ -17,7 +17,7 @@ configuration at the same five seeds.
 from __future__ import annotations
 
 from sweeps._runner import cli
-from sweeps.bundle_B import run_one
+from ablations.b1_optimizer.bundle_B import run_one
 
 SEEDS = (0, 1, 2, 3, 4)
 TUNED = {"adam": 1e-2, "soap": 3e-3}   # from the converged B0 sweep

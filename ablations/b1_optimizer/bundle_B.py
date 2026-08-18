@@ -46,7 +46,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "Burgers_identification"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case1_burgers"))
 
 from common.instrument import (Counters, RunTimer, require_l40s,  # noqa: E402
                                ssbroyden_hessian_bytes, trajectory_bytes)

@@ -9,7 +9,7 @@
 #   sbatch --array=0-19 slurm/run_sweep.sh A          # bundle A, 20 rows
 #   PARTITION=3090 sbatch --array=0-74 slurm/run_sweep.sh E
 #
-# The row count must match `python -m sweeps.<bundle> --count`; submitting a wider
+# The row count must match `--count` on the same module; submitting a wider
 # array is harmless (extra tasks exit 0 with "row out of range"), submitting a
 # narrower one silently drops rows, so always read the count first.
 #
@@ -78,6 +78,13 @@ export OMP_NUM_THREADS=8
 export MKL_NUM_THREADS=8
 export OPENBLAS_NUM_THREADS=8
 
-"${PY}" -u -m "sweeps.bundle_${BUNDLE}" --row "${SLURM_ARRAY_TASK_ID:-0}"
+# The two Appendix-B ablations live under ablations/, the rest under sweeps/.
+case "${BUNDLE}" in
+  B|B1) MODULE="ablations.b1_optimizer.bundle_${BUNDLE}" ;;
+  F)    MODULE="ablations.b2_architecture.bundle_${BUNDLE}" ;;
+  *)    MODULE="sweeps.bundle_${BUNDLE}" ;;
+esac
+
+"${PY}" -u -m "${MODULE}" --row "${SLURM_ARRAY_TASK_ID:-0}"
 
 echo "=== done $(date -Is)"

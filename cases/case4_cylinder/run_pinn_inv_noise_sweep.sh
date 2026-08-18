@@ -22,7 +22,7 @@ which python
 python -V
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
 
-cd /oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison/cylinder
+cd /oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison/cases/case4_cylinder
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
 
 N_RUNS=${N_RUNS:-10}

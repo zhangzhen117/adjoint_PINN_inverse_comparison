@@ -135,7 +135,7 @@ def stage_assemble():
     probe_xy = np.array([(x, y) for x in np.linspace(1, 3, 4)
                          for y in np.linspace(-1, 1, 4)])
 
-    hist = os.path.join(REPO, "cylinder", "history")
+    hist = os.path.join(REPO, "cases", "case4_cylinder", "history")
     np.savez(os.path.join(hist, "saturated_of.npz"),
              u0=u0, times=np.array([0.0, T1 - T0]),
              snaps=np.stack([u0, uT]), t0a=0.0, nu_true=0.01,

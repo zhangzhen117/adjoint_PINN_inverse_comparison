@@ -8,7 +8,7 @@ regularization weight -- gamma* = 1e-2, the value Table 2 and Table 4 now use at
 sigma = 1%, rather than the submitted 1e-3.
 
 Figure geometry, fonts, colour maps and colourbar placement follow the original
-plotting cell in Darcy_New/darcy_noise.ipynb so the replacements sit beside the
+plotting cell in cases/case2_darcy/darcy_noise.ipynb so the replacements sit beside the
 untouched figures without looking different: 16x8 inches at font size 14, fields
 interpolated onto a 100x100 grid and contoured with 50 levels in jet, errors in
 seismic, and the two colourbars as narrow axes in the lower-left cell.

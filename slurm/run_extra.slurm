@@ -10,7 +10,7 @@
 #SBATCH --output=slurm/logs/%x_%A_%a.log
 
 REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
-GRID="$REPO/cylinder_gridstudy"
+GRID="$REPO/cases/case4_cylinder/gridstudy"
 
 set -o pipefail
 module purge

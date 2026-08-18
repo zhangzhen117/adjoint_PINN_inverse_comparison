@@ -32,13 +32,13 @@ from scipy.sparse import bmat
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(REPO, "cylinder"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
 
 from cylinder_config import CylinderRunConfig          # noqa: E402
 from cylinder_api import CylinderAPI                   # noqa: E402
 from cylinder_solver import CylinderConfig, create_solver  # noqa: E402
 
-HIST = os.path.join(REPO, "cylinder", "history")
+HIST = os.path.join(REPO, "cases", "case4_cylinder", "history")
 T_WIN, DT, NU_TRUE = 5.0, 0.005, 0.01
 
 

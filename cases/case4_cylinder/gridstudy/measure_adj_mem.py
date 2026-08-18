@@ -8,12 +8,12 @@ same high-water mark as the full inversion, at a fraction of the cost.
 """
 import os, sys, resource, numpy as np
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "cylinder"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
 from cylinder_config import CylinderRunConfig
 from cylinder_api import CylinderAPI
 
 cfg = CylinderRunConfig()
-h = os.path.join(REPO, "cylinder", "history")
+h = os.path.join(REPO, "cases", "case4_cylinder", "history")
 cfg.saturated_path = os.path.join(h, "saturated_of.npz")
 cfg.obs_path = os.path.join(h, "probe_obs_of.npz")
 api = CylinderAPI(cfg)

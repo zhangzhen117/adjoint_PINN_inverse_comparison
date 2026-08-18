@@ -36,7 +36,7 @@ PY="${CONDA_PREFIX}/bin/python"
 
 cd "${REPO}"
 mkdir -p slurm/logs results
-export PYTHONPATH="${REPO}:${REPO}/Darcy_New:${PYTHONPATH:-}"
+export PYTHONPATH="${REPO}:${REPO}/cases/case2_darcy:${PYTHONPATH:-}"
 # Fixed BLAS threads so adjoint timings stay comparable (see run_sweep.sh).
 export OMP_NUM_THREADS=8
 export MKL_NUM_THREADS=8

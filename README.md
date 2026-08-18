@@ -14,14 +14,31 @@ Both methods recover an unknown source / coefficient field `f` from sparse or no
 observations, and the repository compares their accuracy and convergence on four
 PDE benchmarks.
 
+## Layout
+
+The tree follows the paper: four benchmark cases and the two ablation studies of
+Appendix B.
+
+```
+cases/         the four benchmarks of Section 3
+  case1_burgers/      case2_darcy/      case3_allencahn/      case4_cylinder/
+ablations/     the two sensitivity studies of Appendix B
+  b1_optimizer/                          b2_architecture/
+sweeps/        the remaining referee sweeps, which feed the main-text tables
+common/        seeding, instrumentation, the sweep runner, shared PINN pieces
+analysis/      one script per manuscript figure
+results/       one JSON line per run, uniform schema
+slurm/         array drivers
+```
+
 ## Benchmarks
 
-| Directory | Problem | Unknown recovered |
-|-----------|---------|-------------------|
-| `Burgers_identification/` | 1D viscous Burgers (periodic, Crank–Nicolson + Newton) | spatial forcing `f(x)` |
-| `AllenCahn_3D_identification/` | 3D Allen–Cahn (Neumann, spectral/FD) | state-dependent reaction force `f(u)` |
-| `Darcy_New/` | 2D Darcy flow, FEM (P2 elements) | log-permeability field `f(x)`, `k = exp(f)` |
-| `cylinder/` | 2D flow past a cylinder (Re = 100, vortex shedding) | viscosity `ν` (Reynolds number) |
+| Test | Directory | Problem | Unknown recovered |
+|------|-----------|---------|-------------------|
+| 1 | `cases/case1_burgers/` | 1D viscous Burgers (periodic, Crank–Nicolson + Newton) | spatial forcing `f(x)` |
+| 2 | `cases/case2_darcy/` | 2D Darcy flow, FEM (P2 elements) | log-permeability field `f(x)`, `k = exp(f)` |
+| 3 | `cases/case3_allencahn/` | 3D Allen–Cahn (Neumann, spectral/FD) | state-dependent reaction force `f(u)` |
+| 4 | `cases/case4_cylinder/` | 2D flow past a cylinder (Re = 100, vortex shedding) | viscosity `ν` (Reynolds number) |
 
 In every case except the cylinder, the unknown `f` is an infinite-dimensional
 field, not a scalar parameter: a function of space in Burgers (`f(x)`) and Darcy
@@ -37,8 +54,12 @@ Each benchmark directory follows the same layout:
 - `run_*.ipynb` — notebook that runs both methods and produces the figures.
 - `figures/` — generated plots; `history/` — saved optimization traces and models.
 
-The `Darcy_New/` case additionally includes Gaussian-random-field utilities
-(`GRF.py`) and an Unscented Kalman Inversion baseline (`UKI.py`).
+Case 2 additionally includes Gaussian-random-field utilities (`GRF.py`) and an
+Unscented Kalman Inversion baseline (`UKI.py`). Case 4 carries its OpenFOAM
+mesh-refinement study in `cases/case4_cylinder/gridstudy/`, which establishes that
+the Test 4 observations are grid-converged and holds the inversions run against
+them; its raw case directories are gitignored, and `mkcase.py` with
+`slurm/run_grid.slurm` regenerates them.
 
 ## Installation
 
@@ -72,9 +93,9 @@ python -c "import scipy.optimize as o; print(o._optimize.__file__)"
 
 Without the patch, `scipy.optimize.minimize` ignores the `method_bfgs` option and
 silently falls back to ordinary BFGS, so results will not match the paper.
-The scalar-control cases (`cylinder/inverse_coarse.py`, `cylinder/cylinder_api.py`)
-deliberately use plain `BFGS` instead, since the SSBroyden update is singular for a
-one-dimensional control.
+The scalar-control case (`cases/case4_cylinder/inverse_coarse.py` and
+`cylinder_api.py`) deliberately uses plain `BFGS` instead, since the SSBroyden
+update is singular for a one-dimensional control.
 
 ## Running
 
@@ -82,44 +103,55 @@ Each benchmark is self-contained. Run scripts from inside their directory, or op
 the corresponding notebook:
 
 ```bash
-cd Burgers_identification
+cd cases/case1_burgers
 jupyter notebook run_identification.ipynb
 ```
 
-The `cylinder/` case also ships shell drivers (`run_cylinder.sh`,
-`run_pinn_inv_noise_sweep.sh`) for batch runs.
+Case 4 also ships shell drivers (`run_cylinder.sh`, `run_pinn_inv_noise_sweep.sh`)
+for batch runs.
 
-## Ablation sweeps
+## The two ablations
 
-The revision's sensitivity studies run through `sweeps/bundle_<letter>.py`, one
-row per (configuration x seed), dispatched by `slurm/run_sweep.sh` as an array
-job. Each writes one JSON line per run to `results/<letter>.jsonl` with a uniform
-schema, so every table and figure in the paper is generated from one dataframe.
+Appendix B reports two sensitivity studies, one per directory under `ablations/`.
 
-| bundle | benchmark | question | referee | results |
+| Study | Directory | Benchmark | Varies | Table | Referee |
+|---|---|---|---|---|---|
+| B.1 | `ablations/b1_optimizer/`    | Burgers    | Adam, SOAP, SSBroyden, each at its tuned learning rate | 6 | R3.7 |
+| B.2 | `ablations/b2_architecture/` | Allen–Cahn | width, depth, activation (silu, L-LAAF), Fourier input encoding | 7 | R1.5, R3.4 |
+
+`b1_optimizer` holds two drivers: `bundle_B` sweeps the learning rate on one seed
+and `bundle_B1` reruns each optimizer at its tuned rate over five seeds, which is
+the table. `b2_architecture` holds `bundle_F`.
+
+## Supporting sweeps
+
+The remaining referee sweeps feed the main-text tables rather than the appendix.
+Every sweep, ablation or not, runs one row per (configuration x seed), dispatched
+by `slurm/run_sweep.sh` as an array job, and writes one JSON line per run to
+`results/<letter>.jsonl` under a uniform schema, so each table and figure in the
+paper is generated from one dataframe.
+
+| bundle | case | question | feeds | referee |
 |---|---|---|---|---|
-| A   | Burgers    | representation x algorithm factorial            | R1.4       | `A.jsonl` |
-| B   | Burgers    | optimizer sensitivity, learning-rate tuning     | R3.7       | `B.jsonl` |
-| B1  | Burgers    | PINN optimizers at their tuned rate, five seeds | R3.7       | `B.jsonl` |
-| C   | cylinder   | does a modern PINN setup change the result?     | R1.5, R3.4 | `C.jsonl` |
-| D   | cyl + AC   | multi-initialization statistics                 | R1.7, R3.5 | `D.jsonl` |
-| D2  | Allen-Cahn | seed statistics for the adjoint                 | R1.7, R3.5 | `D2.jsonl` |
-| E   | Darcy      | noise sensitivity and the gamma sweep           | R3.6       | `E.jsonl` |
-| E2x | Darcy      | extend the gamma grid so the optimum is bracketed | R3.6     | `E.jsonl` |
-| E2y | Darcy      | complete the gamma sweep at the other noise levels | R3.6    | `E.jsonl` |
-| F   | Allen-Cahn | architecture: size, activation, Fourier         | R1.5, R3.4 | `F.jsonl` |
-| G   | cylinder   | does converged reference data improve nu?       | --         | `G.jsonl` |
-| H   | Allen-Cahn | PINN-warm-started adjoint restart, five seeds   | --         | `H.jsonl` |
+| A   | 1 Burgers    | representation x algorithm factorial               | Table 3 | R1.4       |
+| C   | 4 cylinder   | does a modern PINN setup change the result?        | --      | R1.5, R3.4 |
+| D   | 3, 4         | multi-initialization statistics                    | Table 2 | R1.7, R3.5 |
+| D2  | 3 Allen-Cahn | seed statistics for the adjoint                    | Table 2 | R1.7, R3.5 |
+| E   | 2 Darcy      | noise sensitivity and the gamma sweep              | Table 4 | R3.6       |
+| E2x | 2 Darcy      | extend the gamma grid so the optimum is bracketed  | Table 4 | R3.6       |
+| E2y | 2 Darcy      | complete the gamma sweep at the other noise levels | Table 4 | R3.6       |
+| G   | 4 cylinder   | does converged reference data improve nu?          | Table 2 | --         |
+| H   | 3 Allen-Cahn | PINN-warm-started adjoint restart, five seeds      | Sec. 3.3 | --        |
 
 ```bash
-python -m sweeps.bundle_G --count          # number of rows
-sbatch --array=0-9 slurm/run_sweep.sh G    # run them
+python -m sweeps.bundle_G --count               # number of rows
+sbatch --array=0-9 slurm/run_sweep.sh G         # run them
+sbatch --array=0-9 slurm/run_sweep.sh B1        # ablations dispatch the same way
 ```
 
-`cylinder_gridstudy/` is separate: an OpenFOAM mesh-refinement study establishing
-that the Test 4 observations are converged, plus the inversions run against them.
-Its raw case directories are gitignored; `mkcase.py` and `slurm/run_grid.slurm`
-regenerate them.
+`run_sweep.sh` resolves B and B1 to `ablations.b1_optimizer`, F to
+`ablations.b2_architecture`, and everything else to `sweeps`, so the bundle letter
+is all a caller needs.
 
 ## Figures
 

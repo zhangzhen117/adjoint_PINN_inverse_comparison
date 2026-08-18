@@ -43,7 +43,7 @@ def rows():
 
 
 def _run_cylinder(seed):
-    sys.path.insert(0, os.path.join(REPO, "cylinder"))
+    sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
     from cylinder_config import CylinderRunConfig
     import cylinder_pinn_inverse as cpi
 
@@ -55,7 +55,7 @@ def _run_cylinder(seed):
     cfg.seed_inv = 44 + seed
     # Inputs by absolute path: the cylinder's defaults are relative to the CWD,
     # which for a sweep is the repo root. The cached 807 s warmup is reused.
-    cyl_hist = os.path.join(REPO, "cylinder", "history")
+    cyl_hist = os.path.join(REPO, "cases", "case4_cylinder", "history")
     cfg.saturated_path = os.path.join(cyl_hist, "saturated.npz")
     cfg.obs_path = os.path.join(cyl_hist, "probe_obs.npz")
     cfg.hist_dir = run_dir
@@ -89,7 +89,7 @@ def _run_cylinder(seed):
 
 
 def _run_allencahn(seed):
-    sys.path.insert(0, os.path.join(REPO, "AllenCahn_3D_identification"))
+    sys.path.insert(0, os.path.join(REPO, "cases", "case3_allencahn"))
     from cfg import AllenCahn3DConfig
     import PINN as ac_pinn
     import solver as ac_solver

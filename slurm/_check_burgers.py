@@ -18,7 +18,7 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(REPO, "Burgers_identification"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case1_burgers"))
 sys.path.insert(0, REPO)
 
 from cfg import BurgersConfig

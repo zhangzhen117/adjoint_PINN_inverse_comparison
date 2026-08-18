@@ -35,7 +35,8 @@ from matplotlib.ticker import MaxNLocator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-DATA = os.path.join(REPO, "cylinder_gridstudy", "cylinder_history_data.npz")
+DATA = os.path.join(REPO, "cases", "case4_cylinder", "gridstudy",
+                    "cylinder_history_data.npz")
 # Written straight into the manuscript checkout: one script per figure,
 # no "_new" copy to diverge from what the paper actually shows.
 OUT = os.path.join(REPO, "paper_overleaf", "C_optimization_history_4panel.png")

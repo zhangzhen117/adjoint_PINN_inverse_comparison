@@ -24,7 +24,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "AllenCahn_3D_identification"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case3_allencahn"))
 
 from common.instrument import (Counters, RunTimer, require_l40s,  # noqa: E402
                                ssbroyden_hessian_bytes, trajectory_bytes)

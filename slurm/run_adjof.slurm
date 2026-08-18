@@ -9,7 +9,7 @@
 #SBATCH --output=slurm/logs/%x_%j.log
 
 REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
-GRID="$REPO/cylinder_gridstudy"
+GRID="$REPO/cases/case4_cylinder/gridstudy"
 
 # gmsh needs libGLU, which is present on the GPU nodes but not on batch.
 module load mesa-glu/9.0.2-ikgf

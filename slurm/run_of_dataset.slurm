@@ -9,7 +9,7 @@
 #SBATCH --output=slurm/logs/%x_%j.log
 
 REPO=/oscar/data/gk/zzhan536/playing_center/adjoint_test/adjoint_PINN_inverse_comparison
-GRID="$REPO/cylinder_gridstudy"
+GRID="$REPO/cases/case4_cylinder/gridstudy"
 
 # No `set -e`: the module command returns non-zero benignly and killed
 # an earlier attempt after stage 1. Each stage is checked explicitly.

@@ -8,7 +8,7 @@ response letter.
 import sys
 import numpy as np
 
-sys.path.insert(0, "Darcy_New")
+sys.path.insert(0, "cases/case2_darcy")
 
 from cfg import DarcyConfig, calibrate_C_mesh, pinn_reg_weights
 from darcy_adjoint import DarcyInverse, create_observation_grid

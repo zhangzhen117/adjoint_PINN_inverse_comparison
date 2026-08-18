@@ -149,7 +149,7 @@ def main():
 
     d["nu_true"] = 0.01
     d["source"] = ("Test 4 fitted to OpenFOAM L5 observations; PINN = bundle G "
-                   "(paper setup, published budget), adjoint = cylinder_gridstudy")
+                   "(paper setup, published budget), adjoint = case4_cylinder/gridstudy")
     np.savez(OUT, **d)
     print(f"\nwrote {OUT}  ({len(d)} arrays)")
 

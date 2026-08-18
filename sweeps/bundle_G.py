@@ -1,7 +1,7 @@
 """Bundle G -- does converged reference data improve the cylinder PINN's nu?
 
 Test 4's observations come from the paper's FEM solver on its production mesh. The
-OpenFOAM grid study (cylinder_gridstudy/) put the discretization error of that data
+OpenFOAM grid study (cases/case4_cylinder/gridstudy/) put the discretization error of that data
 at about 0.4% on the probe vector and 1.4e-3 on the terminal field, while the
 published inversion reports eps_nu = 5.2e-3 and the five-seed value is 8.8e-2. The
 published number therefore sits at or below the noise floor of the data it was
@@ -57,7 +57,7 @@ def rows():
 
 def run_one(row, index):
     require_l40s()
-    sys.path.insert(0, os.path.join(REPO, "cylinder"))
+    sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
     from cylinder_config import CylinderRunConfig
     import cylinder_pinn_inverse as cpi
 
@@ -71,7 +71,7 @@ def run_one(row, index):
     cfg = CylinderRunConfig()
     cfg.pinn_setup = "paper"          # the published setup, explicitly
     cfg.seed_inv = 44 + seed
-    cyl_hist = os.path.join(REPO, "cylinder", "history")
+    cyl_hist = os.path.join(REPO, "cases", "case4_cylinder", "history")
     cfg.saturated_path = os.path.join(cyl_hist, sat)
     cfg.obs_path = os.path.join(cyl_hist, obs)
     cfg.hist_dir = run_dir

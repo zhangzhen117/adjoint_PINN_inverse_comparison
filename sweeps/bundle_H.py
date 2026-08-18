@@ -49,7 +49,7 @@ def rows():
 
 def run_one(row, index):
     require_l40s()
-    sys.path.insert(0, os.path.join(REPO, "AllenCahn_3D_identification"))
+    sys.path.insert(0, os.path.join(REPO, "cases", "case3_allencahn"))
     from cfg import AllenCahn3DConfig
     import adjoint_operator as A
     import solver as ac_solver

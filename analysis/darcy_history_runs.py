@@ -32,7 +32,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "Darcy_New"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case2_darcy"))
 sys.path.insert(0, os.path.join(REPO, "sweeps"))
 
 from common.seeding import set_seed                                  # noqa: E402

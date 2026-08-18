@@ -19,7 +19,7 @@ One ``seed`` drives both the noise realization and the network initialization, s
 each seed is an independent replication of the entire pipeline rather than of one
 stage of it. The adjoint and EKI share the KL parameterization; the PINN uses a
 neural field, with its H1 weight converted by the truth-free calibration in
-``Darcy_New/cfg.py`` (the notebook derived that constant from ``m_true``).
+``cases/case2_darcy/cfg.py`` (the notebook derived that constant from ``m_true``).
 
 This sweep also re-establishes the Test 2 headline numbers, which could not be
 reproduced from the committed history files.
@@ -34,7 +34,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "Darcy_New"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case2_darcy"))
 
 from common.instrument import (Counters, RunTimer, require_l40s,  # noqa: E402
                                ssbroyden_hessian_bytes)

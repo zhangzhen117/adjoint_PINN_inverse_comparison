@@ -42,7 +42,7 @@ from scipy.sparse import bmat, csr_matrix
 from scipy.spatial import cKDTree
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "cylinder"))
+sys.path.insert(0, os.path.join(REPO, "cases", "case4_cylinder"))
 
 from cylinder_solver import CylinderConfig, create_solver   # noqa: E402
 
