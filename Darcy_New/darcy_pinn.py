@@ -20,6 +20,7 @@ Training: Adam → SciPy BFGS with periodic resampling.
 import numpy as np
 import torch
 import torch.nn as nn
+from collections import deque
 from scipy.optimize import minimize
 from numpy.linalg import cholesky, LinAlgError
 import time
@@ -182,7 +183,12 @@ class DarcyPINN:
             'loss_reg': [],
             'grad_norm': [],
             'iteration': [],
-            'm_error': []  # Track m error during training
+            'm_error': [],  # Track m error during training
+            # Indices, into the arrays above, of the accepted quasi-Newton
+            # iterates. The BFGS phase records once per objective call, so
+            # without this a convergence plot counts line-search trials as
+            # iterations. Empty during the Adam phase, where the two coincide.
+            'bfgs_iterates': []
         }
         self.iter_count = 0
     
@@ -515,6 +521,11 @@ class DarcyPINN:
         # Track last evaluation for callback
         last_eval = {}
         bfgs_iter_count = [0]  # Use list to allow mutation in nested function
+        # The accepted iterate is normally the last point the line search tried,
+        # but not always, so the callback identifies it by value against the last
+        # few evaluations rather than assuming the most recent one.
+        recent = deque(maxlen=64)
+        missed = [0]
         
         def fun_and_jac(params_vec):
             """Combined objective and gradient for BFGS."""
@@ -541,6 +552,7 @@ class DarcyPINN:
             self.history['grad_norm'].append(grad_norm)
             self.history['iteration'].append(self.iter_count)
             self.history['m_error'].append(m_error if m_error is not None else np.nan)
+            recent.append((len(self.history['loss']) - 1, params_vec.copy()))
             self.iter_count += 1
             bfgs_iter_count[0] += 1
             
@@ -565,9 +577,16 @@ class DarcyPINN:
             
             return components['loss'], grad
         
-        def callback(_xk):
-            """Callback after each BFGS iteration."""
-            pass  # Printing is now done in fun_and_jac
+        def callback(xk):
+            """Mark which recorded evaluation this accepted iterate sits at."""
+            for i, v in reversed(recent):
+                if np.array_equal(v, xk):
+                    self.history['bfgs_iterates'].append(i)
+                    return
+            # Never seen in practice; counted rather than raised so that a
+            # missed match cannot abort a training run.
+            missed[0] += 1
+            self.history['bfgs_iterates'].append(len(self.history['loss']) - 1)
         
         # Get current parameters
         theta0 = self._get_params_flat()
@@ -653,6 +672,9 @@ class DarcyPINN:
             print("-" * 70)
             print(f"  BFGS training completed in {t_elapsed:.2f}s")
             print(f"  Final loss: {self.history['loss'][-1]:.4e}{final_m_str}")
+            print(f"  {len(self.history['bfgs_iterates'])} accepted iterates over "
+                  f"{len(self.history['loss'])} evaluations"
+                  + (f"  ({missed[0]} unmatched)" if missed[0] else ""))
     
     def _adam_recovery(self, n_steps: int, lr: float):
         """Run a few Adam steps to recover from BFGS failure."""
@@ -677,6 +699,9 @@ class DarcyPINN:
             self.history['grad_norm'].append(grad_norm)
             self.history['iteration'].append(self.iter_count)
             self.history['m_error'].append(m_error if m_error is not None else np.nan)
+            # Recovery steps are genuine iterations, one record each, so they
+            # belong on the iterate axis alongside the accepted BFGS steps.
+            self.history['bfgs_iterates'].append(len(self.history['loss']) - 1)
             self.iter_count += 1
     
     def _get_params_flat(self) -> np.ndarray:

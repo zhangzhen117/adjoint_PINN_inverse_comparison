@@ -14,6 +14,12 @@ identical. That is why the adjoint has a spread in Table 2 at all.
 Everything else -- mesh, KL basis, observation layout, regularization, optimizer
 settings -- comes from DarcyConfig unchanged, so the final errors here should
 reproduce the bundle-E records for the same cell.
+
+Both arms record one entry per objective call, which is not one per iteration:
+the quasi-Newton line search evaluates several trial points per accepted step. So
+each arm also stores the indices of its accepted iterates -- adj_s*_it here, and
+pinn_s*_it_idx from the history DarcyPINN now keeps -- and the convergence figure
+plots against those, not against the raw evaluation count.
 """
 
 from __future__ import annotations
@@ -55,7 +61,12 @@ def main():
         nrm_true = np.linalg.norm(m_true)
 
         # ---------------------------------------------------------- adjoint
+        # The objective is called once per line-search trial, so the recorded
+        # history is not an iterate sequence. The callback marks which records
+        # are accepted iterates; the figure plots those, and the count matches
+        # the iteration budget the text quotes.
         hist = {"J": [], "misfit": [], "reg": [], "eps": []}
+        seen, iterates = [], [0]
         t0 = time.time()
 
         def obj(xi):
@@ -65,20 +76,36 @@ def main():
             hist["misfit"].append(float(misfit))
             hist["reg"].append(float(reg))
             hist["eps"].append(float(np.linalg.norm(m - m_true) / nrm_true))
+            seen.append(np.asarray(xi, float).copy())
             return J, Phi @ grad_m
 
+        def cb(xk):
+            for i in range(len(seen) - 1, -1, -1):
+                if np.array_equal(seen[i], xk):
+                    iterates.append(i)
+                    return
+            iterates.append(len(seen) - 1)
+
         res = minimize(fun=obj, x0=np.zeros(r), jac=True, method="BFGS",
+                       callback=cb,
                        options=dict(maxiter=cfg.max_iter, gtol=cfg.gtol, disp=False,
                                     method_bfgs=cfg.opt_method,
                                     hess_inv0=np.eye(r), initial_scale=False))
+        # scipy exits on the gradient test before the last callback fires, so the
+        # returned point is appended by hand (as in the cylinder histories).
+        last = next((i for i in range(len(seen) - 1, -1, -1)
+                     if np.array_equal(seen[i], res.x)), len(seen) - 1)
+        if last not in iterates:
+            iterates.append(last)
         t_adj = time.time() - t0
         m_adj = Phi.T @ res.x
         e_adj = float(np.linalg.norm(m_adj - m_true) / nrm_true)
         for k, v in hist.items():
             d[f"adj_s{seed}_{k}"] = np.asarray(v, float)
+        d[f"adj_s{seed}_it"] = np.asarray(iterates, int)
         d[f"adj_s{seed}_t"] = t_adj
-        print(f"seed {seed} adjoint: {len(hist['J'])} evals, eps_f={e_adj:.4e}, "
-              f"{t_adj:.1f}s", flush=True)
+        print(f"seed {seed} adjoint: {int(res.nit)} iterations / {len(hist['J'])} "
+              f"evals, eps_f={e_adj:.4e}, {t_adj:.1f}s", flush=True)
 
         # ------------------------------------------------------------- PINN
         t0 = time.time()
@@ -96,8 +123,10 @@ def main():
                              ("loss_reg", "reg"), ("m_error", "eps"),
                              ("iteration", "it")):
             d[f"pinn_s{seed}_{k_dst}"] = np.asarray(ph[k_src], float)
+        d[f"pinn_s{seed}_it_idx"] = np.asarray(ph["bfgs_iterates"], int)
         d[f"pinn_s{seed}_t"] = t_pinn
-        print(f"seed {seed} PINN:    {len(ph['loss'])} evals, eps_f={e_pinn:.4e}, "
+        print(f"seed {seed} PINN:    {len(ph['bfgs_iterates'])} quasi-Newton "
+              f"iterates / {len(ph['loss'])} evals, eps_f={e_pinn:.4e}, "
               f"{t_pinn:.0f}s", flush=True)
         rec.append((seed, e_adj, t_adj, e_pinn, t_pinn))
 

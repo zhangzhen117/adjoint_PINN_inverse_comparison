@@ -11,10 +11,14 @@ so its five runs differ only because each sees a different noise draw. The adjoi
 band is therefore pure data noise, while the PINN band mixes noise with
 initialization. Neither band is "optimizer variability" in the usual sense.
 
-Run lengths differ between seeds (4000-4219 PINN evaluations of which the first
-2000 are the Adam warmup, 55-58 adjoint), so
-traces are truncated to the shortest before the median and band are taken, and the
-panel titles report how many evaluations that leaves.
+Both arms record once per objective call, and the quasi-Newton line search
+evaluates several trial points per accepted step, so an axis drawn over those
+records counts trials as iterations -- the adjoint held 54-61 records against a
+50-iteration budget. Both panels are therefore indexed down to the accepted
+iterates, whose indices the run script now stores, and the trials in between are
+not drawn. Run lengths still differ between seeds, so traces are truncated to the
+shortest before the median and band are taken, and the panel titles report how
+many iterations that leaves.
 """
 
 from __future__ import annotations
@@ -44,23 +48,28 @@ N_ADAM = 2000            # DarcyConfig.n_adam_iters
 d = np.load(DATA)
 
 
-def stack(prefix, key):
-    """(5, n) with n the shortest run, so the median is over five live traces.
+def iterates(prefix, s):
+    """Indices of run s's accepted iterates within its per-evaluation history.
 
-    PINN traces are cut to the SSBroyden phase; the adjoint has no warmup.
+    PINN traces are cut to the SSBroyden phase, whose iterates are the ones with
+    a record index past the Adam warmup; the adjoint has no warmup.
     """
-    arrs = [d[f"{prefix}_s{s}_{key}"] for s in SEEDS]
-    n = min(a.size for a in arrs)
-    A = np.stack([a[:n] for a in arrs])
     if prefix == "pinn":
-        A = A[:, N_ADAM:]
-        n = A.shape[1]
-    return A, n
+        k = d[f"pinn_s{s}_it_idx"]
+        return k[k >= N_ADAM]
+    return d[f"adj_s{s}_it"]
+
+
+def stack(prefix, key):
+    """(5, n) over accepted iterates, n the shortest run, median over five."""
+    arrs = [d[f"{prefix}_s{s}_{key}"][iterates(prefix, s)] for s in SEEDS]
+    n = min(a.size for a in arrs)
+    return np.stack([a[:n] for a in arrs]), n
 
 
 fig, ax = plt.subplots(2, 2, figsize=(19, 13.5))
 for a in ax.ravel():
-    a.set_xlabel("Iteration", fontsize=20)
+    a.set_xlabel("Quasi-Newton iteration", fontsize=20)
     a.grid(True, which="both", lw=0.5, alpha=0.35)
     a.tick_params(labelsize=17)
 
@@ -88,9 +97,9 @@ for (key, lab, col) in (("loss", r"$\ell$", C[0]), ("pde", r"$\ell_{\rm pde}$", 
             a.semilogy(x, y, color=col, lw=0.7, alpha=0.25, zorder=2)
     a.semilogy(x, np.median(Y, axis=0), color=col, lw=2.2, label=lab, zorder=3)
 _, n_p = stack("pinn", "loss")
-# The quasi-Newton phase throws occasional line-search excursions that reach 1e21
-# for a single evaluation. Clipping to the bulk keeps the axis readable; the
-# spikes are still drawn, they simply run off the top.
+# The excursions that reached 1e21 in the published figure were line-search trials
+# and are no longer drawn, but the axis is still set from the bulk so that a single
+# large accepted step cannot flatten the rest of the trace.
 Yl, _ = stack("pinn", "loss")
 a.set_ylim(10 ** np.floor(np.log10(max(stack("pinn", "reg")[0].min(), 1e-6))) / 10,
            10 ** np.ceil(np.log10(np.percentile(Yl, 99.5))) * 10)
@@ -105,7 +114,7 @@ for (key, lab, col, ls) in (("J", r"$J$", C[0], "-"),
                             ("misfit", "misfit", C[1], "--"),
                             ("reg", "reg", C[2], "--")):
     Y, n = stack("adj", key)
-    x = np.arange(1, n + 1)
+    x = np.arange(n)
     for y in Y:
         a.semilogy(x, y, color=col, lw=0.7, alpha=0.25, ls=ls, zorder=2)
     a.semilogy(x, np.median(Y, axis=0), color=col, lw=2.2, ls=ls, label=lab, zorder=3)
@@ -120,7 +129,7 @@ for col_i, (prefix, name, nn) in enumerate((("pinn", "PINN", n_p),
                                             ("adj", "adjoint", n_a))):
     a = ax[1, col_i]
     E, n = stack(prefix, "eps")
-    x = np.arange(n) if prefix == "pinn" else np.arange(1, n + 1)
+    x = np.arange(n)
     for e in E:
         a.semilogy(x, e, color=C[0], lw=0.8, alpha=0.30, zorder=2)
     med = np.median(E, axis=0)
@@ -141,4 +150,4 @@ print("wrote", OUT)
 for prefix, name in (("pinn", "PINN"), ("adj", "adjoint")):
     E, _ = stack(prefix, "eps")
     print(f"  {name:8s} final eps_f {E[:,-1].mean():.4f} +- {E[:,-1].std(ddof=1):.4f}")
-print(f"  truncated to {n_p} PINN and {n_a} adjoint evaluations")
+print(f"  truncated to {n_p} PINN and {n_a} adjoint iterations")

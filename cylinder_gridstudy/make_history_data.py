@@ -12,6 +12,7 @@ What this writes, into cylinder_history_data.npz:
   pinn_it       (n,)    iteration index, shared
   pinn_switch   scalar  iteration at which Adam hands over to SSBroyden
   adj_cold_*    (m,)    objective, nu, |grad| per objective evaluation
+  adj_*_it              indices of the accepted BFGS iterates within those
   adj_warm_*    list    the same for each of the five restarts
   *_seconds             wall-clock axes where they are meaningful
 
@@ -29,10 +30,47 @@ import glob
 import os
 
 import numpy as np
+from scipy.optimize import minimize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "cylinder_history_data.npz")
+
+
+def accepted_iterates(z):
+    """Indices of the accepted BFGS iterates within the per-evaluation history.
+
+    The inversion records one entry per objective call and scipy reports only a
+    scalar iteration count, but the text and the figure quote iterations ("four
+    BFGS iterations, nine function evaluations"). Replaying the recorded (J, g)
+    stream through the identical minimize() call reproduces the run exactly --
+    BFGS is a deterministic function of the values it is handed -- so its
+    callback marks which evaluations were accepted. The reproduced nfev and nit
+    are asserted against the recorded ones, and the callback misses the final
+    iteration (the loop exits on the gradient test before it fires), so the
+    returned point is appended.
+    """
+    th, J, g = (np.asarray(z[k], float) for k in ("theta", "J", "g"))
+    n, idx = [0], []
+
+    def obj(x):
+        i = n[0]
+        n[0] += 1
+        assert abs(float(x[0]) - th[i]) < 1e-9, (i, float(x[0]), th[i])
+        return J[i], np.array([g[i]])
+
+    def cb(xk):
+        idx.append(int(np.argmin(np.abs(th - float(xk[0])))))
+
+    # options as in CylinderRunConfig: inv_maxiter, inv_gtol, inv_method_bfgs
+    res = minimize(obj, np.array([th[0]]), method="BFGS", jac=True, callback=cb,
+                   options={"maxiter": 10, "gtol": 1e-5, "disp": False,
+                            "method_bfgs": "BFGS"})
+    last = int(np.argmin(np.abs(th - float(res.x[0]))))
+    it = [0] + idx + ([last] if last not in idx else [])
+    assert n[0] == int(z["nfev"]), (n[0], int(z["nfev"]))
+    assert int(res.nit) == int(z["nit"]) == len(it) - 1
+    return np.array(it, int)
 
 
 def main():
@@ -79,7 +117,9 @@ def main():
         # uniform cost per evaluation, so this axis is real rather than assumed
         d["adj_cold_seconds"] = (np.arange(1, len(J) + 1)
                                  * float(z["runtime_sec"]) / max(len(J), 1))
-        print(f"adjoint cold: {len(J)} evals, nu -> {float(z['nu_rec']):.8f}, "
+        d["adj_cold_it"] = accepted_iterates(z)
+        print(f"adjoint cold: {int(z['nit'])} it / {len(J)} evals, "
+              f"nu -> {float(z['nu_rec']):.8f}, "
               f"eps_nu = {float(z['rel_rec']):.3e}, {float(z['runtime_sec']):.0f}s")
     else:
         print("adjoint cold: NOT YET AVAILABLE")
@@ -98,9 +138,11 @@ def main():
             d[f"adj_warm{i}_nu0"] = float(z["nu0"])
             d[f"adj_warm{i}_seconds"] = (np.arange(1, len(J) + 1)
                                          * float(z["runtime_sec"]) / max(len(J), 1))
+            d[f"adj_warm{i}_it"] = accepted_iterates(z)
             print(f"adjoint restart {i}: nu0={float(z['nu0']):.6f} -> "
                   f"{float(z['nu_rec']):.8f}, eps_nu={float(z['rel_rec']):.3e}, "
-                  f"{len(J)} evals, {float(z['runtime_sec']):.0f}s")
+                  f"{int(z['nit'])} it / {len(J)} evals, "
+                  f"{float(z['runtime_sec']):.0f}s")
         d["adj_n_warm"] = len(warm)
     else:
         print("adjoint restarts: NOT YET AVAILABLE")

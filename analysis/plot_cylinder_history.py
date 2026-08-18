@@ -12,6 +12,11 @@ over, so the figure has to as well:
   observations, so the adjoint objective can no longer reach zero: it flattens at
   the mismatch between the two discretizations. That floor is the point of the
   top-right panel and is annotated rather than left for the reader to notice.
+* The adjoint history holds one record per objective call, and drawing it against
+  a "Iteration" axis conflicted with the text, which reports four BFGS iterations
+  against nine function evaluations. The adjoint panels now plot the accepted
+  iterates only (indices supplied by make_history_data.py), so their axis means
+  what it says; the line-search trials in between are not iterates.
 
 Per-seed traces are drawn thin and the median bold. The loss panel shows the
 median of each component, with the composite loss also drawn per seed, since five
@@ -26,6 +31,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -51,6 +57,9 @@ for a in ax.ravel():
     a.set_xlabel("Iteration", fontsize=20)
     a.grid(True, which="both", lw=0.5, alpha=0.35)
     a.tick_params(labelsize=17)
+for a in ax[:, 1]:                       # adjoint panels: integer iteration axis
+    a.set_xlabel("BFGS iteration", fontsize=20)
+    a.xaxis.set_major_locator(MaxNLocator(integer=True))
 
 # ---------------------------------------------------------------- PINN losses
 a = ax[0, 0]
@@ -94,36 +103,39 @@ a.legend(fontsize=17)
 
 # -------------------------------------------------------- adjoint objectives
 a = ax[0, 1]
-Jc = d["adj_cold_J"]
-a.semilogy(np.arange(1, len(Jc) + 1), Jc, color=C_COLD, lw=2.6,
-           label=f"Adjoint ({d['adj_cold_t']:.0f} s)", marker="o", ms=6)
+kc = d["adj_cold_it"]                    # accepted iterates, not function calls
+Jc = d["adj_cold_J"][kc]
+a.semilogy(np.arange(len(kc)), Jc, color=C_COLD, lw=2.6,
+           label=f"Adjoint ({d['adj_cold_t']:.0f} s, {len(kc)-1} it)",
+           marker="o", ms=6)
 nw = int(d["adj_n_warm"])
 tw = np.array([float(d[f"adj_warm{i}_t"]) for i in range(nw)])
+kw = [d[f"adj_warm{i}_it"] for i in range(nw)]
 for i in range(nw):
-    J = d[f"adj_warm{i}_J"]
-    a.semilogy(np.arange(1, len(J) + 1), J, color=C_WARM, lw=1.6, alpha=0.75,
+    J = d[f"adj_warm{i}_J"][kw[i]]
+    a.semilogy(np.arange(len(J)), J, color=C_WARM, lw=1.6, alpha=0.75,
                marker="s", ms=5,
                label=(f"Adjoint restart ({tw.mean():.0f}$\\pm${tw.std(ddof=1):.0f} s,"
                       f" {nw} seeds)" if i == 0 else None))
-floor = min(Jc.min(), min(d[f"adj_warm{i}_J"].min() for i in range(nw)))
+floor = min(Jc.min(), min(d[f"adj_warm{i}_J"][kw[i]].min() for i in range(nw)))
 a.axhline(floor, color="0.35", ls=":", lw=2.0)
 a.annotate(f"discretization mismatch floor  {floor:.2e}",
-           xy=(len(Jc) * 0.62, floor), xytext=(0, 14), textcoords="offset points",
-           fontsize=17, color="0.25", ha="center")
+           xy=((len(kc) - 1) * 0.62, floor), xytext=(0, 14),
+           textcoords="offset points", fontsize=17, color="0.25", ha="center")
 a.set_ylabel("J", fontsize=20)
 a.set_title("Adjoint objectives (finite-volume observations)", fontsize=21)
 a.legend(fontsize=17)
 
 # ------------------------------------------------------- adjoint viscosities
 a = ax[1, 1]
-nu_c = d["adj_cold_nu"]
+nu_c = d["adj_cold_nu"][kc]
 ec = abs(nu_c[-1] / NU_TRUE - 1)
-a.semilogy(np.arange(1, len(nu_c) + 1), nu_c, color=C_COLD, lw=2.6, marker="o",
+a.semilogy(np.arange(len(nu_c)), nu_c, color=C_COLD, lw=2.6, marker="o",
            ms=6, label=f"Adjoint $\\nu$ (rel err {ec:.3e})")
 ew = np.array([abs(d[f"adj_warm{i}_nu"][-1] / NU_TRUE - 1) for i in range(nw)])
 for i in range(nw):
-    nu = d[f"adj_warm{i}_nu"]
-    a.semilogy(np.arange(1, len(nu) + 1), nu, color=C_WARM, lw=1.6, alpha=0.75,
+    nu = d[f"adj_warm{i}_nu"][kw[i]]
+    a.semilogy(np.arange(len(nu)), nu, color=C_WARM, lw=1.6, alpha=0.75,
                marker="s", ms=5,
                label=(f"Adjoint restart $\\nu$ (rel err {ew.mean():.3e})"
                       if i == 0 else None))
