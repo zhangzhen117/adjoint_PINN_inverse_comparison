@@ -128,7 +128,7 @@ def main():
     shutil.rmtree(stage)
 
     print("\nCopying the manuscript sources")
-    for f in ("references.bib", "elsarticle-num.bst", "response.tex"):
+    for f in ("references.bib", "elsarticle-num.bst"):
         shutil.copy2(os.path.join(PAPER, f), OUT)
         print(f"  {f}")
     # elsarticle ships as .dtx/.ins; unpack the class so the archive stands alone
@@ -190,7 +190,15 @@ def main():
         if f.endswith("-eps-converted-to.pdf") or os.path.splitext(f)[1] in (
                 ".aux", ".log", ".blg", ".out", ".spl", ".fls", ".fdb_latexmk"):
             os.remove(os.path.join(OUT, f))
-            
+    # The compile is the check that the archive builds, not a deliverable: the
+    # publisher recompiles from source, and at 750 dpi the PDF is half the
+    # archive. It is kept beside the package for reading rather than inside it.
+    pdf = os.path.join(OUT, "main.pdf")
+    if os.path.exists(pdf):
+        shutil.move(pdf, os.path.join(REPO, "submission_main.pdf"))
+        print("  main.pdf moved out of the package (kept as submission_main.pdf)")
+
+
     print("\n" + "=" * 78)
     w = max(len(r[1]) for r in report)
     for num, base, fmt, px, eff, size, note in report:

@@ -50,3 +50,4 @@ submission_figures/
 # Assembled submission archive (regenerate with analysis/make_submission_package.py)
 submission_package/
 submission_package.zip
+submission_main.pdf
