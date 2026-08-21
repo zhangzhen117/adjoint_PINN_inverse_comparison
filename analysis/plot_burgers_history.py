@@ -27,6 +27,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+from common import figformat
 from matplotlib.ticker import LogFormatterMathtext, LogLocator
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -143,8 +145,8 @@ for ax in axes:
                                           numticks=100))
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-fig.savefig(OUT, dpi=170)
-print("wrote", OUT)
+fig.savefig(figformat.target(OUT), dpi=figformat.dpi(170))
+print("wrote", figformat.target(OUT))
 for nm, Y in (("PINN  NN", Pnn), ("PINN  grid", Pgr), ("adj   NN", Ann),
               ("adj   grid", Agr)):
     f = Y[:, -1]

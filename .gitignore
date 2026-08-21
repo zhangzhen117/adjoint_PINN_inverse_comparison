@@ -43,3 +43,6 @@ results/*_invalid*/
 
 # local session helper, not part of the project
 claude_resume
+
+# Publisher figure exports (regenerate with FIG_FMT/FIG_DPI; tens of MB)
+submission_figures/

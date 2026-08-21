@@ -172,3 +172,23 @@ not manuscript figures.
 Saved optimization histories (`history/*.npz`, `*.pt`) and generated figures
 (`figures/*.png`) are committed so the results are reproducible without re-running
 the (sometimes long) optimizations.
+
+## Publisher figure exports
+
+The plot scripts double as the export path for submission. `FIG_FMT` picks the
+container, `FIG_DPI` the raster resolution, and `FIG_OUTDIR` the destination; with
+none of them set the scripts behave exactly as before and write the working PNG
+into `paper_overleaf/`.
+
+```bash
+# line plots as vector EPS, where resolution is not a parameter at all
+for s in burgers darcy ac cylinder; do
+  FIG_FMT=eps FIG_OUTDIR=submission_figures python analysis/plot_${s}_history.py
+done
+# filled-contour field plots as LZW-compressed TIFF at 650 dpi
+FIG_FMT=tiff FIG_DPI=650 FIG_OUTDIR=submission_figures \
+  python analysis/plot_darcy_fields.py
+```
+
+`submission_figures/` is gitignored: the TIFFs run to about 12 MB each, and an
+uncompressed one would be 147 MB.

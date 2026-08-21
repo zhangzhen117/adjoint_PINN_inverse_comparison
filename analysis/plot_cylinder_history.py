@@ -31,6 +31,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+from common import figformat
 from matplotlib.ticker import MaxNLocator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -148,8 +150,8 @@ a.legend(fontsize=16)
 
 fig.tight_layout()
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-fig.savefig(OUT, dpi=140)
-print("wrote", OUT)
+fig.savefig(figformat.target(OUT), dpi=figformat.dpi(140))
+print("wrote", figformat.target(OUT))
 print(f"  PINN  eps_nu {eps.mean():.3e} +- {eps.std(ddof=1):.1e}")
 print(f"  adj   cold {ec:.4e}   restarts {ew.mean():.4e} +- {ew.std(ddof=1):.1e}")
 print(f"  objective floor {floor:.3e}")

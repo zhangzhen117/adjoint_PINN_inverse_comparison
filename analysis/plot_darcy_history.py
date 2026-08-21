@@ -30,6 +30,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from common import figformat
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 DATA = os.path.join(REPO, "results", "darcy_history_data.npz")
@@ -145,8 +147,8 @@ for col_i, (prefix, name, nn) in enumerate((("pinn", "PINN", n_p),
 
 fig.tight_layout()
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-fig.savefig(OUT, dpi=140)
-print("wrote", OUT)
+fig.savefig(figformat.target(OUT), dpi=figformat.dpi(140))
+print("wrote", figformat.target(OUT))
 for prefix, name in (("pinn", "PINN"), ("adj", "adjoint")):
     E, _ = stack(prefix, "eps")
     print(f"  {name:8s} final eps_f {E[:,-1].mean():.4f} +- {E[:,-1].std(ddof=1):.4f}")

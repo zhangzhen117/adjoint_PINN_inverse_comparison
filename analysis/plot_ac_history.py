@@ -28,6 +28,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from common import figformat
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 # Written straight into the manuscript checkout: one script per figure,
@@ -203,8 +205,8 @@ ax[1, 1].set_ylim(_lo, _hi)
 
 fig.tight_layout()
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-fig.savefig(OUT, dpi=140)
-print("wrote", OUT)
+fig.savefig(figformat.target(OUT), dpi=figformat.dpi(140))
+print("wrote", figformat.target(OUT))
 print(f"  PINN    eps_f {f.mean():.3e} +- {f.std(ddof=1):.1e}   t {t_p.mean():.0f}s")
 print(f"  adjoint eps_f {fc.mean():.3e} +- {fc.std(ddof=1):.1e}  t {t_c.mean():.0f}s")
 print(f"  restart cut at {np.mean(cut):.0f}+-{np.std(cut,ddof=1):.0f} iters "

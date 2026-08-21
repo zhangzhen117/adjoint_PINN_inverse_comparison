@@ -26,6 +26,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+from common import figformat
 from scipy.interpolate import griddata
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -101,7 +103,8 @@ def panel(kind, sym, ref_key, pts, out_name):
             cb.set_label(lab, rotation=270, labelpad=20)
 
         out = os.path.join(OUTDIR, out_name)
-        fig.savefig(out, dpi=300, bbox_inches="tight")
+        fig.savefig(figformat.target(out), dpi=figformat.dpi(300),
+                    bbox_inches="tight", **figformat.save_kwargs())
     print(f"wrote {out}")
     for (_, lab), e in zip(METHODS, eps):
         print(f"  {lab:8s} eps_{sym} = {100*e:.2f}%")
