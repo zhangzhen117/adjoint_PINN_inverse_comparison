@@ -7,11 +7,11 @@ submission settings, converts the rest, renames them to their manuscript numbers
 rewrites the \\includegraphics keys in a copy of main.tex, and compiles the copy
 in place so the archive is known to build before it is uploaded.
 
-Formats. Line plots go out as EPS: vector, so "650 dpi" is satisfied by
-construction rather than by a large raster. The field and snapshot figures are
-photographic in character and go out as JPEG at quality 95, which pdflatex reads
-natively -- TIFF does not compile under pdflatex, so shipping TIFF would mean the
-archive could not be built from its own contents.
+Format. Everything goes out as JPEG at quality 95, rendered at 750 dpi where a
+script can regenerate it. JPEG is on the publisher's allowed list and pdflatex
+reads it natively; TIFF does not compile under pdflatex, so an archive using it
+could not be built from its own contents, and EPS, while vector and therefore
+free of any dpi question, is not what this journal asked for.
 
 Five figures come from notebook cells that depend on in-memory training state
 rather than from a script, so they can only be carried across at the resolution
@@ -34,16 +34,16 @@ OUT = os.path.join(REPO, "submission_package")
 # manuscript figure number -> source basename. Figure 2 is a two-panel figure, so
 # its subfigures carry the 2a/2b suffixes the guidelines use.
 FIGURES = [
-    ("Figure1",  "B_training_history",                  "eps"),
+    ("Figure1",  "B_training_history",                  "jpg"),
     ("Figure2a", "B_learned_force",                     "jpg"),
     ("Figure2b", "B_terminal_solution",                 "jpg"),
-    ("Figure3",  "D_training_history",                  "eps"),
+    ("Figure3",  "D_training_history",                  "jpg"),
     ("Figure4",  "D_three_method_comparison",           "jpg"),
     ("Figure5",  "D_three_method_solution_comparison",  "jpg"),
-    ("Figure6",  "AC_training_history",                 "eps"),
+    ("Figure6",  "AC_training_history",                 "jpg"),
     ("Figure7",  "AC_force_recovery",                   "jpg"),
     ("Figure8",  "AC_terminal_solution_slice",          "jpg"),
-    ("Figure9",  "C_optimization_history_4panel",       "eps"),
+    ("Figure9",  "C_optimization_history_4panel",       "jpg"),
     ("Figure10", "C_pinn_inv_compare_3times",           "jpg"),
 ]
 
@@ -56,7 +56,7 @@ SCRIPTED = {
     "plot_darcy_fields.py":     ["D_three_method_comparison",
                                  "D_three_method_solution_comparison"],
 }
-DPI = 650
+DPI = 750
 COLUMN_IN = 190 / 25.4          # full text width of the journal page
 
 
