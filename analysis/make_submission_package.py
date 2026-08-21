@@ -148,8 +148,14 @@ def main():
             raise SystemExit(f"unmapped figure in main.tex: {name}")
         return f"\\includegraphics{opts}{{{keys[name]}}}"
 
+    # Both \revzz and \revaa draw on zzrev, and the revision tables set it
+    # directly, so one definition takes the whole submission copy to black. The
+    # Overleaf source keeps its colour for the authors' own reading.
+    black = 0
     out_lines, n = [], 0
     for line in open(os.path.join(PAPER, "main.tex")):
+        if line.startswith("\\definecolor{zzrev}"):
+            line, black = "\\definecolor{zzrev}{RGB}{0,0,0}\n", 1
         # a commented-out \includegraphics is not a figure; the preamble carries
         # one from the class template
         code = line.split("%", 1)[0] if not line.lstrip().startswith("%") else ""
@@ -158,6 +164,9 @@ def main():
             n += k
         out_lines.append(line)
     print(f"  {n} \\includegraphics keys rewritten to Figure<N>")
+    if not black:
+        raise SystemExit("did not find the zzrev definition to set to black")
+    print("  revision colour set to black")
     open(os.path.join(OUT, "main.tex"), "w").write("".join(out_lines))
 
     print("\nCompiling the archive from its own contents")
