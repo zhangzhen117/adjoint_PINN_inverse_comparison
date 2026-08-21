@@ -20,6 +20,7 @@ is in the panel labels, not left to the reader.
 from __future__ import annotations
 
 import glob
+import json
 import os
 
 import matplotlib
@@ -84,8 +85,16 @@ for i, (key, lab) in enumerate((("bfgs_loss", r"$\ell$"),
     else:
         axes[0].semilogy(np.arange(1, Y.shape[1] + 1), np.median(Y, axis=0),
                          color=C[i], lw=2.0, label=lab)
-axes[0].set_title(f"PINN losses, NN ({tp.mean():.0f}$\\pm${tp.std(ddof=1):.0f} s, "
-                  f"5 seeds)")
+# Quote the runtime the tables quote. The npz `runtime_sec` brackets a slightly
+# narrower window than the instrumented `runtime_s` in A.jsonl -- 194.1 against
+# 194.7 s over the same five runs -- which rounds to 194 here and 195 in Table 2.
+# Reading the table's own source keeps the figure from contradicting it.
+_t = [r["runtime_s"] for r in
+      (json.loads(l) for l in open(os.path.join(REPO, "results", "A.jsonl")))
+      if r["method"] == "pinn" and r["representation"] == "nn"]
+tp_tab = np.array(_t) if _t else tp
+axes[0].set_title(f"PINN losses, NN ({tp_tab.mean():.0f}$\\pm$"
+                  f"{tp_tab.std(ddof=1):.0f} s, 5 seeds)")
 axes[0].set_ylabel("loss")
 axes[0].legend(ncol=2, fontsize=9)
 
